@@ -50,7 +50,7 @@ From the project folder, run these in order:
 | Order | Command | What it makes |
 |---|---|---|
 | 1 | `python3 code/01_pull_pbp.py` | `data/pbp_2018_2025.parquet` (every regular season play, 2018 to 2025) |
-| 2 | `python3 code/02_filter_plays.py` | `data/fourth_down_attempts.csv`, `data/field_goals.csv`, `data/punts.csv`, `data/net_punt_hist.png` |
+| 2 | `python3 code/02_filter_plays.py` | `data/fourth_down_attempts.csv`, `data/field_goals.csv`, `data/punts.csv`, `data/punt_distribution_by_bucket.csv`, `data/punt_mean_sd_by_bucket.csv`, `data/net_punt_hist.png` |
 | 3 | `python3 code/03_build_drives.py` | `data/drives.csv` |
 
 Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Each script prints checks (row counts, rates) when it finishes.
@@ -63,13 +63,51 @@ Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Each s
 | `fourth_down_attempts.csv` | fourth-down run or pass (going for it) | 5,750 |
 | `field_goals.csv` | field goal attempt | 8,241 |
 | `punts.csv` | punt | 16,794 |
-| `drives.csv` | drive | 46,363 |
+| `punt_distribution_by_bucket.csv` | start bucket and net yards bucket pair | 215 |
+| `punt_mean_sd_by_bucket.csv` | start bucket | 15 |
+| `drives.csv` | drive | 46,359 |
 
 Data source: [nflfastR](https://www.nflfastr.com/) play-by-play, loaded with the [nflreadpy](https://github.com/nflverse/nflreadpy) Python package. Regular season games only.
 
-## Good to know about the data
+## Data notes
 
-- **net_punt_yards** (in `punts.csv`): for a touchback it is `yardline_100 - 20`. For every other punt it is `kick_distance - return_yards`. Penalty yards are not included.
-- **fourth_down_attempts.csv** includes fake punts and fake field goals (206 plays), because they are runs or passes on fourth down.
-- **field_goals.csv** includes 724 kicks that were not on fourth down (mostly at the end of a half).
-- **drives.csv**: a drive starts at its first snap, not the kickoff. Fourth-down plays wiped out by a penalty are not counted in `num_fourth_downs`.
+Nothing is deleted from the play files. Plays we leave out of an estimate are marked with a flag column (1 = yes, 0 = no), and the scripts filter on those flags when they estimate.
+
+### fourth_down_attempts.csv (5,750 plays)
+- Only plays that were a run or a pass on 4th down. Plays wiped out by a penalty (no-plays), kneels, and spikes are not in the file.
+- `is_fake_kick` = 1 for **206** plays run from punt or field goal formation (fake punts and fake field goals).
+- `is_botched_snap` = 1 for **51** plays nflfastR marked as aborted (a bad snap or a bad exchange). **19** plays have both flags.
+- Conversion rates use the **5,512** plays with neither flag, because our "go for it" means the offense lining up to go for it. Fakes convert at a different rate (58.3% vs 53.8%) because of surprise.
+
+### field_goals.csv (8,241 kicks)
+- `on_fourth_down` = 0 for **724** kicks that were not on 4th down (mostly at the end of a half). One of these is a rare "fair catch kick" with no down.
+- Make rates by distance use **all 8,241** kicks, because the kick itself does not depend on the down. Using 4th-down kicks only moves the overall make rate from 84.6% to 85.3%, and no 5-yard distance bucket moves by more than 1.4 percentage points.
+
+### punts.csv (16,794 punts)
+- `net_punt_yards` is how far the ball moved toward the receiving team's end zone:
+  - touchback: `yardline_100 - 20`
+  - blocked punt: where the ball actually ended up (see below)
+  - every other punt: `kick_distance - return_yards`
+  - Penalty yards are not counted.
+- `has_penalty` = 1 for **1,471** punts with a penalty. **Left out** of the punt distribution, because penalty yards move the ball and our net does not count them.
+- `is_muffed_recovered` = 1 for **124** punts where the returner muffed the punt and the punting team got the ball back. **Left out** of the distribution, because the punting team keeps the ball. We note this as a limitation.
+- `is_blocked` = 1 for **91** blocked punts. **Kept in** the distribution, because a block is a real outcome of choosing to punt (88 remain after removing penalty punts). nflfastR records 0 kick yards and 0 return yards for every blocked punt, so we use where the ball ended up instead:
+  - **58**: the spot where the receiving team took over (their next snap)
+  - **33**: the defense scored a touchdown or safety, so the ball ended in the punting team's end zone (`net_punt_yards = yardline_100 - 100`)
+- The punt distribution uses **15,201** punts (no penalty and not a recovered muff). 2 punts had both a penalty and a recovered muff.
+- Punt return touchdowns show up the same way: the ball goes all the way back to the punting team's end zone (`net_punt_yards = yardline_100 - 100`).
+
+### punt_distribution_by_bucket.csv and punt_mean_sd_by_bucket.csv
+- Buckets are 5 yards wide and named by their lowest value. `start_bucket` 40 means the punt started at yardline_100 40 to 44. `net_yards_bucket` -5 means -5 to -1 net yards.
+- In each `start_bucket`, the `probability` column adds up to 1.
+- We use these per-bucket distributions instead of one normal curve, because net punt yards change a lot with field position. The mean is about 27 yards when punting from the opponent's 35 to 39, but about 43 yards from your own side of the field. The SD is about 7 yards near midfield and about 12 yards deep in your own end.
+- Start buckets 25 (2 punts) and 30 (15 punts) are too small to trust on their own.
+
+### drives.csv (46,359 drives)
+- A drive starts at its first snap, not the kickoff.
+- **392** drive numbers with no snap at all are left out. These include **53 kickoff-return touchdowns** (the receiving team scored before running a play). Most of the rest are game-start and end-of-game marker rows, or kickoffs right before halftime.
+- **4** drives are dropped because nflfastR put two different offenses under one drive number: 2018_01_TEN_MIA drive 13, 2018_09_CHI_BUF drive 21, 2019_02_TB_CAR drive 2, and 2023_12_PIT_CIN drive 8. Two of these (CHI_BUF and TB_CAR) are also the 2 field goal drives that showed 0 points, so 4 drives are dropped in total.
+- Fourth-down plays wiped out by a penalty are not counted in `num_fourth_downs`. **1,143** drives (2.5%) had 2 or more fourth downs that stood.
+
+### Season coverage
+- 2022 has 271 regular season games instead of 272, because the Bills at Bengals game in Week 17 was canceled after Damar Hamlin's cardiac arrest.

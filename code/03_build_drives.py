@@ -30,6 +30,10 @@ Key definitions (read these before using the table):
     Fourth-down play:
         A snap with down == 4 that actually counted. Plays wiped out by a
         penalty (play_type "no_play") are not counted.
+    Dropped drives:
+        Drives where nflfastR put snaps by two different offenses under one
+        drive number, and field goal drives that show 0 points. The script
+        prints their game_id and fixed_drive.
 """
 
 from pathlib import Path
@@ -147,7 +151,31 @@ drives["num_fourth_downs"] = drives["num_fourth_downs"].fillna(0)
 drives["reached_fourth_down"] = (drives["num_fourth_downs"] > 0).astype(int)
 
 # ---------------------------------------------------------------
-# Step 5: Tidy up and save
+# Step 5: Drop drives with data errors (printed so we can list them in the report)
+# ---------------------------------------------------------------
+# a) Merged drives: nflfastR gave snaps by two different offenses the same
+#    drive number, so that drive's points and fourth downs are wrong.
+offenses_per_drive = snaps.groupby(DRIVE_KEY)["posteam"].nunique()
+merged_ids = offenses_per_drive[offenses_per_drive > 1].reset_index()[DRIVE_KEY]
+
+# b) Field goal drives that show 0 points for the offense.
+fg_zero_ids = drives[
+    (drives["drive_result"] == "Field goal") & (drives["points_scored"] == 0)
+][DRIVE_KEY]
+
+print("Merged drives (snaps by more than one offense):")
+print(merged_ids.astype({"fixed_drive": int}).to_string(index=False))
+print("\nField goal drives showing 0 points:")
+print(fg_zero_ids.astype({"fixed_drive": int}).to_string(index=False))
+
+# A drive on both lists is only dropped (and counted) once.
+drop_ids = pd.concat([merged_ids, fg_zero_ids]).drop_duplicates()
+print(f"\nDropping {len(drop_ids)} drives in total.\n")
+drives = drives.merge(drop_ids, on=DRIVE_KEY, how="left", indicator=True)
+drives = drives[drives["_merge"] == "left_only"].drop(columns="_merge")
+
+# ---------------------------------------------------------------
+# Step 6: Tidy up and save
 # ---------------------------------------------------------------
 drives = drives[[
     "game_id", "season", "posteam", "defteam", "fixed_drive",
@@ -172,6 +200,7 @@ drives.to_csv(OUTPUT_FILE, index=False)
 n_games = pbp["game_id"].nunique()
 print("========== CHECKS: drives.csv ==========")
 print(f"Total drives: {len(drives):,}")
+print(f"Drives dropped for data errors (listed above): {len(drop_ids)}")
 print(f"Drive numbers left out because they had no snap: {len(no_snap_ids):,}")
 print("  Their fixed_drive_result values:")
 print("  " + no_snap_results.value_counts(dropna=False).to_string().replace("\n", "\n  "))
@@ -194,9 +223,4 @@ print(drives["num_fourth_downs"].value_counts().sort_index().to_string())
 print("\nCross-check: points_scored for each drive_result "
       "(TD should be 6/7/8, FG should be 3, most others 0):")
 print(pd.crosstab(drives["drive_result"], drives["points_scored"]).to_string())
-
-# Drives where nflfastR gave snaps by two different offenses the same drive number.
-offenses_per_drive = snaps.groupby(DRIVE_KEY)["posteam"].nunique()
-print(f"\nDrives whose snaps have more than one offense (data issue): "
-      f"{int((offenses_per_drive > 1).sum())}")
 print(f"\nSaved to: {OUTPUT_FILE}")
