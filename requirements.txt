@@ -3,3 +3,4 @@ pandas
 polars
 pyarrow
 matplotlib
+openpyxl

@@ -50,19 +50,21 @@ BUCKET_SIZE = 5
 MIN_START_BUCKET = 35
 
 # ---------------------------------------------------------------
-# Columns we keep in each output file (from the task list)
+# Columns we keep in each output file (from the task list).
+# Each file also gets play_id (so every play can be traced back to the
+# play-by-play data) and desc (the text description of the play) at the end.
 # ---------------------------------------------------------------
 FOURTH_DOWN_COLS = [
-    "game_id", "season", "posteam", "defteam", "qtr", "game_seconds_remaining",
+    "game_id", "play_id", "season", "posteam", "defteam", "qtr", "game_seconds_remaining",
     "yardline_100", "ydstogo", "score_differential", "wp",
     "fourth_down_converted", "fourth_down_failed",
 ]
 FIELD_GOAL_COLS = [
-    "game_id", "season", "posteam", "qtr", "game_seconds_remaining",
+    "game_id", "play_id", "season", "posteam", "qtr", "game_seconds_remaining",
     "yardline_100", "kick_distance", "field_goal_result", "score_differential", "wp",
 ]
 PUNT_COLS = [
-    "game_id", "season", "posteam", "qtr", "game_seconds_remaining",
+    "game_id", "play_id", "season", "posteam", "qtr", "game_seconds_remaining",
     "yardline_100", "kick_distance", "return_yards", "touchback", "punt_blocked",
     "score_differential",
 ]
@@ -152,8 +154,8 @@ go["is_fake_kick"] = go["desc"].str.contains(
 go["is_botched_snap"] = (go["aborted_play"] == 1).astype(int)
 
 go_out = to_whole_numbers(
-    go[FOURTH_DOWN_COLS + ["is_fake_kick", "is_botched_snap"]].copy(),
-    ["season", "qtr", "game_seconds_remaining", "yardline_100", "ydstogo",
+    go[FOURTH_DOWN_COLS + ["is_fake_kick", "is_botched_snap", "desc"]].copy(),
+    ["play_id", "season", "qtr", "game_seconds_remaining", "yardline_100", "ydstogo",
      "score_differential", "fourth_down_converted", "fourth_down_failed"],
 )
 go_out.to_csv(DATA_DIR / "fourth_down_attempts.csv", index=False)
@@ -205,8 +207,8 @@ fg["made"] = (fg["field_goal_result"] == "made").astype(int)
 fg["on_fourth_down"] = (fg["down"] == 4).astype(int)
 
 fg_out = to_whole_numbers(
-    fg[FIELD_GOAL_COLS + ["made", "on_fourth_down"]].copy(),
-    ["season", "qtr", "game_seconds_remaining", "yardline_100",
+    fg[FIELD_GOAL_COLS + ["made", "on_fourth_down", "desc"]].copy(),
+    ["play_id", "season", "qtr", "game_seconds_remaining", "yardline_100",
      "kick_distance", "score_differential"],
 )
 fg_out.to_csv(DATA_DIR / "field_goals.csv", index=False)
@@ -336,14 +338,14 @@ punts["is_fumble_recovered"] = (
 punts["return_team_scored"] = (punts["defteam_score_post"] > punts["defteam_score"]).astype(int)
 punts["punting_team_scored"] = (punts["posteam_score_post"] > punts["posteam_score"]).astype(int)
 
-PUNT_FLAGS = ["has_penalty", "is_blocked", "is_muffed_recovered", "is_fumble_recovered",
+PUNT_FLAGS = ["is_blocked", "has_penalty", "is_muffed_recovered", "is_fumble_recovered",
               "return_team_scored", "punting_team_scored"]
 # Every flag except is_blocked means "leave this punt out of the distribution".
 EXCLUDE_FLAGS = [flag for flag in PUNT_FLAGS if flag != "is_blocked"]
 
 punt_out = to_whole_numbers(
-    punts[PUNT_COLS + ["net_punt_yards"] + PUNT_FLAGS].copy(),
-    ["season", "qtr", "game_seconds_remaining", "yardline_100", "kick_distance",
+    punts[PUNT_COLS + ["net_punt_yards"] + PUNT_FLAGS + ["desc"]].copy(),
+    ["play_id", "season", "qtr", "game_seconds_remaining", "yardline_100", "kick_distance",
      "return_yards", "touchback", "punt_blocked", "score_differential", "net_punt_yards"],
 )
 punt_out.to_csv(DATA_DIR / "punts.csv", index=False)

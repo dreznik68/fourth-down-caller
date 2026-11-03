@@ -14,6 +14,7 @@ We are building a probabilistic dynamic program that recommends the best NFL fou
 fourth-down-caller/
   code/              Python scripts (run them in number order)
   data/              data files (NOT on GitHub, see "Getting the data" below)
+  outputs/           Excel workbook for the team (NOT on GitHub, shared in Google Drive)
   docs/              the website (GitHub Pages publishes from this folder)
   requirements.txt   list of Python packages the scripts need
   README.md          this file
@@ -35,6 +36,7 @@ This installs:
 - **pandas** and **polars**: work with data tables
 - **pyarrow**: reads and writes `.parquet` files
 - **matplotlib**: makes charts
+- **openpyxl**: writes the Excel workbook
 
 ## Getting the data
 
@@ -52,8 +54,11 @@ From the project folder, run these in order:
 | 1 | `python3 code/01_pull_pbp.py` | `data/pbp_2018_2025.parquet` (every regular season play, 2018 to 2025) |
 | 2 | `python3 code/02_filter_plays.py` | `data/fourth_down_attempts.csv`, `data/field_goals.csv`, `data/punts.csv`, `data/punt_distribution_by_bucket.csv`, `data/punt_mean_sd_by_bucket.csv`, `data/net_punt_hist.png` |
 | 3 | `python3 code/03_build_drives.py` | `data/drives.csv` |
+| 4 | `python3 code/04_team_outputs.py` | `outputs/Week1_Data_Summary.xlsx` (the team workbook) and `data/formula_checks.csv` |
 
-Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Each script prints checks (row counts, rates) when it finishes.
+Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Script 4 reads the files from scripts 2 and 3. Each script prints checks (row counts, rates) when it finishes.
+
+Script 4 also asks LibreOffice (installed in `/Applications`) to recalculate every formula in the workbook and compares each result with the same number computed in pandas. Without LibreOffice it still builds the workbook and skips that check.
 
 ## What is in each data file
 
@@ -68,6 +73,8 @@ Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Each s
 | `drives.csv` | drive | 46,359 |
 
 Data source: [nflfastR](https://www.nflfastr.com/) play-by-play, loaded with the [nflreadpy](https://github.com/nflverse/nflreadpy) Python package. Regular season games only.
+
+The three play files also have `play_id` (to trace each play back to the play-by-play data) and `desc` (the text description of the play).
 
 ## Data notes
 

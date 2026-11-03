@@ -221,3 +221,6 @@ __marimo__/
 
 # Project data files (too large for git, recreated by running the scripts in code/)
 data/
+
+# Team outputs (shared through Google Drive, not GitHub)
+outputs/
