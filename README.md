@@ -63,8 +63,8 @@ Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Each s
 | `fourth_down_attempts.csv` | fourth-down run or pass (going for it) | 5,750 |
 | `field_goals.csv` | field goal attempt | 8,241 |
 | `punts.csv` | punt | 16,794 |
-| `punt_distribution_by_bucket.csv` | start bucket and net yards bucket pair | 215 |
-| `punt_mean_sd_by_bucket.csv` | start bucket | 15 |
+| `punt_distribution_by_bucket.csv` | start bucket and net yards bucket pair | 201 |
+| `punt_mean_sd_by_bucket.csv` | start bucket | 13 |
 | `drives.csv` | drive | 46,359 |
 
 Data source: [nflfastR](https://www.nflfastr.com/) play-by-play, loaded with the [nflreadpy](https://github.com/nflverse/nflreadpy) Python package. Regular season games only.
@@ -91,17 +91,20 @@ Nothing is deleted from the play files. Plays we leave out of an estimate are ma
   - Penalty yards are not counted.
 - `has_penalty` = 1 for **1,471** punts with a penalty. **Left out** of the punt distribution, because penalty yards move the ball and our net does not count them.
 - `is_muffed_recovered` = 1 for **124** punts where the returner muffed the punt and the punting team got the ball back. **Left out** of the distribution, because the punting team keeps the ball. We note this as a limitation.
-- `is_blocked` = 1 for **91** blocked punts. **Kept in** the distribution, because a block is a real outcome of choosing to punt (88 remain after removing penalty punts). nflfastR records 0 kick yards and 0 return yards for every blocked punt, so we use where the ball ended up instead:
+- `is_fumble_recovered` = 1 for **52** punts where the returner caught the punt cleanly, then fumbled, and the punting team recovered. **Left out** for the same reason as recovered muffs.
+- `return_team_scored` = 1 for **90** punts where the receiving team scored on the play: 83 touchdowns (punt returns and blocked punts returned for a score) and 7 safeties. **Left out**, because our model leaves out defensive scores.
+- `punting_team_scored` = 1 for **9** punts where the punting team scored on the play: 6 touchdowns after recovering a muff or fumble, and 3 safeties when the returner was downed in his own end zone. **Left out** for the same reason.
+- `is_blocked` = 1 for **91** blocked punts. **Kept in** the distribution, because a block is a real outcome of choosing to punt. nflfastR records 0 kick yards and 0 return yards for every blocked punt, so `net_punt_yards` uses where the ball ended up instead:
   - **58**: the spot where the receiving team took over (their next snap)
-  - **33**: the defense scored a touchdown or safety, so the ball ended in the punting team's end zone (`net_punt_yards = yardline_100 - 100`)
-- The punt distribution uses **15,201** punts (no penalty and not a recovered muff). 2 punts had both a penalty and a recovered muff.
-- Punt return touchdowns show up the same way: the ball goes all the way back to the punting team's end zone (`net_punt_yards = yardline_100 - 100`).
+  - **33**: the defense scored a touchdown or safety, so the ball ended in the punting team's end zone (`net_punt_yards = yardline_100 - 100`). These are also flagged `return_team_scored`, so they are left out.
+  - **56** blocked punts are in the distribution after all exclusions.
+- A punt can have more than one flag. **1,734** punts have at least one exclusion flag, so the punt distribution uses **15,060** punts.
 
 ### punt_distribution_by_bucket.csv and punt_mean_sd_by_bucket.csv
 - Buckets are 5 yards wide and named by their lowest value. `start_bucket` 40 means the punt started at yardline_100 40 to 44. `net_yards_bucket` -5 means -5 to -1 net yards.
+- `start_bucket` 35 holds every punt from yardline_100 **39 or less** (238 punts). Buckets 25 and 30 had too few punts to stand on their own, so they are merged into 35.
 - In each `start_bucket`, the `probability` column adds up to 1.
-- We use these per-bucket distributions instead of one normal curve, because net punt yards change a lot with field position. The mean is about 27 yards when punting from the opponent's 35 to 39, but about 43 yards from your own side of the field. The SD is about 7 yards near midfield and about 12 yards deep in your own end.
-- Start buckets 25 (2 punts) and 30 (15 punts) are too small to trust on their own.
+- We use these per-bucket distributions instead of one normal curve, because net punt yards change a lot with field position. The mean is about 26 yards when punting from the opponent's 39 or closer, but about 43 to 44 yards from your own side of the field. The SD is about 6 to 7 yards near midfield and about 10 yards deep in your own end.
 
 ### drives.csv (46,359 drives)
 - A drive starts at its first snap, not the kickoff.

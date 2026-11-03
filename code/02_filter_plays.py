@@ -45,6 +45,10 @@ INPUT_FILE = DATA_DIR / "pbp_2018_2025.parquet"
 # A bucket is named by its lowest value: bucket 40 means 40 to 44 yards.
 BUCKET_SIZE = 5
 
+# Very few punts start closer than the opponent's 35, so every punt from
+# yardline_100 39 or less goes in one start bucket, named 35.
+MIN_START_BUCKET = 35
+
 # ---------------------------------------------------------------
 # Columns we keep in each output file (from the task list)
 # ---------------------------------------------------------------
@@ -68,12 +72,15 @@ PUNT_COLS = [
 #   desc                     -> the text description of the play
 #   qb_kneel, qb_spike       -> to double check no kneels or spikes slipped through
 #   aborted_play             -> botched snaps
-#   penalty, fumble_lost     -> punt flags
+#   penalty, fumble_lost, fumbled_1_team -> punt flags
 #   touchdown, safety        -> to score blocked punts correctly
+#   posteam_score, posteam_score_post, defteam_score, defteam_score_post
+#                            -> to see if either team scored on a punt
 #   punt_fair_catch, punt_downed, punt_out_of_bounds -> to pick spot check punts
 HELPER_COLS = [
     "play_id", "down", "play_type", "desc", "qb_kneel", "qb_spike", "aborted_play",
-    "penalty", "fumble_lost", "touchdown", "safety",
+    "penalty", "fumble_lost", "fumbled_1_team", "touchdown", "safety",
+    "posteam_score", "posteam_score_post", "defteam_score", "defteam_score_post",
     "punt_fair_catch", "punt_downed", "punt_out_of_bounds",
 ]
 
@@ -306,33 +313,55 @@ punts.loc[blocked_unscored, "net_punt_yards"] = np.nan
 #                        the ball back (desc says "MUFFS" and the receiving team
 #                        lost the fumble). The punting team keeps the ball, so
 #                        this is not a normal change of possession. Left out.
+#   is_fumble_recovered: the returner caught the punt cleanly, then fumbled,
+#                        and the punting team recovered. Same problem as a
+#                        recovered muff (the punting team keeps the ball). Left out.
+#   return_team_scored:  the receiving team scored on the punt play (punt
+#                        return touchdown, blocked punt touchdown, or safety).
+#                        Left out, because our model leaves out defensive scores.
+#   punting_team_scored: the punting team scored on the punt play (a touchdown
+#                        after recovering a muff or fumble, or a safety when the
+#                        returner was downed in his own end zone). Left out for
+#                        the same reason.
 punts["has_penalty"] = (punts["penalty"] == 1).astype(int)
 punts["is_blocked"] = blocked.astype(int)
 punts["is_muffed_recovered"] = (
     punts["desc"].str.contains("MUFFS") & (punts["fumble_lost"] == 1)
 ).astype(int)
+punts["is_fumble_recovered"] = (
+    ~punts["desc"].str.contains("MUFFS")
+    & (punts["fumbled_1_team"] == punts["defteam"])
+    & (punts["fumble_lost"] == 1)
+).astype(int)
+punts["return_team_scored"] = (punts["defteam_score_post"] > punts["defteam_score"]).astype(int)
+punts["punting_team_scored"] = (punts["posteam_score_post"] > punts["posteam_score"]).astype(int)
+
+PUNT_FLAGS = ["has_penalty", "is_blocked", "is_muffed_recovered", "is_fumble_recovered",
+              "return_team_scored", "punting_team_scored"]
+# Every flag except is_blocked means "leave this punt out of the distribution".
+EXCLUDE_FLAGS = [flag for flag in PUNT_FLAGS if flag != "is_blocked"]
 
 punt_out = to_whole_numbers(
-    punts[PUNT_COLS + ["net_punt_yards", "has_penalty", "is_blocked", "is_muffed_recovered"]].copy(),
+    punts[PUNT_COLS + ["net_punt_yards"] + PUNT_FLAGS].copy(),
     ["season", "qtr", "game_seconds_remaining", "yardline_100", "kick_distance",
      "return_yards", "touchback", "punt_blocked", "score_differential", "net_punt_yards"],
 )
 punt_out.to_csv(DATA_DIR / "punts.csv", index=False)
 
-# The punts we use for the distribution: no penalty and not a recovered muff.
-punt_est = punt_out[(punt_out["has_penalty"] == 0) & (punt_out["is_muffed_recovered"] == 0)].copy()
+# The punts we use for the distribution: none of the exclusion flags is 1.
+excluded = punt_out[EXCLUDE_FLAGS].sum(axis=1) > 0
+punt_est = punt_out[~excluded].copy()
 
 print("\n========== CHECKS: punts.csv ==========")
 print(f"Rows in file: {len(punt_out):,}")
-print(f"  has_penalty = 1:         {int(punt_out['has_penalty'].sum()):,}")
-print(f"  is_blocked = 1:          {int(punt_out['is_blocked'].sum()):,} "
-      f"(defense scored on {int((blocked & defense_scored).sum())}, "
+for flag in PUNT_FLAGS:
+    note = "  (kept in the distribution)" if flag == "is_blocked" else ""
+    print(f"  {flag + ' = 1:':<26}{int(punt_out[flag].sum()):>6,}{note}")
+print(f"  Blocked punts: defense scored on {int((blocked & defense_scored).sum())}, "
       f"receiving team took over on {int((blocked & ~defense_scored & receiving_team_next).sum())}, "
-      f"left blank {int(blocked_unscored.sum())})")
-print(f"  is_muffed_recovered = 1: {int(punt_out['is_muffed_recovered'].sum()):,}")
-print(f"  penalty AND muffed recovered: "
-      f"{int(((punt_out['has_penalty'] == 1) & (punt_out['is_muffed_recovered'] == 1)).sum())}")
-print(f"Punts used for the distribution (no penalty, not a recovered muff): {len(punt_est):,}")
+      f"left blank {int(blocked_unscored.sum())}")
+print(f"Punts with at least one exclusion flag (a punt can have more than one): {int(excluded.sum()):,}")
+print(f"Punts used for the distribution: {len(punt_est):,}")
 print(f"  of these, blocked: {int(punt_est['is_blocked'].sum())}")
 print(f"net_punt_yards, distribution punts: mean {punt_est['net_punt_yards'].mean():.2f}, "
       f"SD {punt_est['net_punt_yards'].std():.2f}, "
@@ -363,11 +392,12 @@ for label, rows in spot_check_groups.items():
 # ---------------------------------------------------------------
 # start_bucket:     yardline_100 where the punt started, rounded down to a
 #                   5-yard bucket (start_bucket 40 = yardline_100 from 40 to 44).
+#                   Start bucket 35 holds every punt from yardline_100 39 or less.
 # net_yards_bucket: net_punt_yards rounded down to a 5-yard bucket
 #                   (net_yards_bucket 35 = 35 to 39 net yards, -5 = -5 to -1).
 # probability:      share of punts from that start_bucket that landed in that
 #                   net_yards_bucket. Adds up to 1 within each start_bucket.
-punt_est["start_bucket"] = bucket(punt_est["yardline_100"].astype(float))
+punt_est["start_bucket"] = bucket(punt_est["yardline_100"].astype(float)).clip(lower=MIN_START_BUCKET)
 punt_est["net_yards_bucket"] = bucket(punt_est["net_punt_yards"].astype(float))
 
 dist = (
@@ -395,7 +425,7 @@ print(f"Probabilities sum to 1 in every start_bucket: {bool(np.allclose(sums, 1.
       f"(smallest sum {sums.min():.6f}, largest {sums.max():.6f})")
 
 print("\n========== CHECKS: punt_mean_sd_by_bucket.csv ==========")
-print("start_bucket = yardline_100 where the punt started (40 means 40 to 44)")
+print("start_bucket = yardline_100 where the punt started (40 means 40 to 44, 35 means 39 or less)")
 print(mean_sd.to_string(index=False))
 small = mean_sd[mean_sd["punts"] < 50]
 if len(small) > 0:
@@ -408,8 +438,7 @@ bins = np.arange(values.min() - 0.5, values.max() + 1.5, 1)
 ax.hist(values, bins=bins, color="#4C72B0")
 ax.set_xlabel("Net punt yards")
 ax.set_ylabel("Number of punts")
-ax.set_title(f"Net punt yards, 2018 to 2025 regular season "
-             f"({len(values):,} punts, no penalties or recovered muffs)")
+ax.set_title(f"Net punt yards, 2018 to 2025 regular season ({len(values):,} punts used)")
 fig.tight_layout()
 fig.savefig(DATA_DIR / "net_punt_hist.png", dpi=150)
 print(f"\nHistogram saved to: {DATA_DIR / 'net_punt_hist.png'}")
