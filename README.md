@@ -4,7 +4,7 @@ IE 4520 (Stochastic Modeling) Group 4 class project.
 
 We are building a probabilistic dynamic program that recommends the best NFL fourth-down call (go for it, kick a field goal, or punt) by picking the option that gives the highest chance of winning the game.
 
-**Status (week of Nov 2):** the data is pulled and cleaned. The model inputs are built (`code/05_inputs.py`). The dynamic program solver is next. The model is described in `PLAN.md`.
+**Status:** the data is pulled and cleaned, the model inputs are built (`code/05_inputs.py`), and the dynamic program is solved (`code/06_solve.py`). The model is described in `PLAN.md` and in "The model" below.
 
 **Website:** https://dreznik68.github.io/fourth-down-caller/
 
@@ -55,9 +55,10 @@ From the project folder, run these in order:
 | 2 | `python3 code/02_filter_plays.py` | `data/fourth_down_attempts.csv`, `data/field_goals.csv`, `data/punts.csv`, `data/punt_distribution_by_bucket.csv`, `data/punt_mean_sd_by_bucket.csv`, `data/net_punt_hist.png` |
 | 3 | `python3 code/03_build_drives.py` | `data/drives.csv` |
 | 4 | `python3 code/04_team_outputs.py` | `outputs/Week1_Data_Summary.xlsx` (the team workbook) and `data/formula_checks.csv` |
-| 5 | `python3 code/05_inputs.py` | `data/inputs/` (every input the dynamic program uses, see PLAN.md) |
+| 5 | `python3 code/05_inputs.py` | `data/inputs/` (every input the dynamic program uses, see "The model" below) |
+| 6 | `python3 code/06_solve.py` | `data/results/policy.csv` (best call for every situation) and `outputs/DP_Hand_Check.xlsx` |
 
-Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Scripts 4 and 5 read the files from scripts 2 and 3. Each script prints checks (row counts, rates) when it finishes.
+Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Scripts 4 and 5 read the files from scripts 2 and 3. Script 6 reads the files from script 5. Each script prints checks (row counts, rates) when it finishes.
 
 Script 4 also asks LibreOffice (installed in `/Applications`) to recalculate every formula in the workbook and compares each result with the same number computed in pandas. Without LibreOffice it still builds the workbook and skips that check.
 
@@ -76,6 +77,30 @@ Script 4 also asks LibreOffice (installed in `/Applications`) to recalculate eve
 Data source: [nflfastR](https://www.nflfastr.com/) play-by-play, loaded with the [nflreadpy](https://github.com/nflverse/nflreadpy) Python package. Regular season games only.
 
 The three play files also have `play_id` (to trace each play back to the play-by-play data) and `desc` (the text description of the play).
+
+## The model
+
+A dynamic program with one stage per possession left in the game (M, 1 to 8). We have the ball first and face a fourth down, so odd stages are ours and even stages are the opponent's. At each of our fourth downs it picks go, field goal, or punt to get the highest chance of winning. After the last possession, a win counts 1, a tie 0.5 (standing in for overtime), and a loss 0. The full model is in `PLAN.md`.
+
+### Inputs (`code/05_inputs.py`, saved in `data/inputs/`)
+- **c(t), conversion chance:** the raw conversion rate for each yards to go (1 to 9, and 10+), from the 5,512 real go-for-it attempts. We use the raw rates instead of a fitted curve because every group has 30 or more plays.
+- **g(k), field goal chance:** a logistic fit on kick distance, from all 8,241 kicks. Kick distance = yardline + 17.
+- **P(y), punt distance:** the average net punt yards for each 5-yard start bucket.
+- **D(y), how a drive ends:** the share of drives from each start bucket that end in a TD (+7), a FG (+3), or no score. The 3,136 "End of half" drives are left out, because the model handles the clock through M.
+- **A, how our possession from S goes:** TD before any fourth down, FG before any fourth down (1.3%, almost all at the end of a half), no score before any fourth down, or the first fourth down at (y, t). From drives starting in S's bucket, End of half drives left out.
+- **S, start spot of a new possession:** 69.57 yards from the opponent's end zone, the 2024 and 2025 average. The 2024 kickoff rule change moved the average start 1.8 yards closer to the opponent than in 2018 to 2023, so we use the new seasons only. Rounded to 70 (your own 30).
+- **M guide:** the typical number of possessions left for each minute left in the 4th quarter. For example, about 5 with 10 minutes left, 3 with 5 minutes left, and 2 with 2 minutes left.
+
+### Assumptions
+- One fourth-down decision per possession (only 2.5% of drives have 2 or more).
+- The opponent's calls, and our calls later in a drive, are league-typical.
+- Punts use the average net distance for that spot.
+- New possessions start at S.
+- M is known.
+- A converted fourth down that is not a TD carries on like a new drive from the spot it reached. A 10+ conversion gains exactly 10 yards.
+- Defensive scores and safeties count as no score.
+- Field position is in 5-yard buckets, and each bucket is worked out at its lowest yard (bucket 40 kicks from 57 yards).
+- A punt that would carry past the goal line is a touchback at the 20. After a missed field goal the opponent starts at the spot of the kick or their own 20, whichever is better for them.
 
 ## Data notes
 

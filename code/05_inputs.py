@@ -5,9 +5,11 @@ What this script does:
     Builds every input the dynamic program needs (see PLAN.md) and saves them
     in data/inputs/:
         c_conversion.csv     c(t): chance of converting a 4th down with t yards to go
-        g_fieldgoal.csv      g(k): chance of making a field goal of k yards (by 5-yard bucket)
-        logistic_fits.csv    intercept and slope of the two logistic fits, so the
-                             solver can get c or g at any single yard
+                             (the raw conversion rate, since every group has 30+ plays)
+        g_fieldgoal.csv      g(k): chance of making a field goal of k yards
+                             (logistic fit, shown next to the raw rate by 5-yard bucket)
+        logistic_fits.csv    intercept and slope of the g logistic fit, so the
+                             solver can get g at any single yard
         P_punt.csv           P(y): mean net punt yards by start bucket
         D_drive.csv          D(y): chance a drive starting at y ends in TD, FG, or no score
         A_our_possession.csv A: how our possession starting at S ends (TD, FG, or
@@ -103,27 +105,23 @@ def print_flags(df, name, key_cols):
 # ===============================================================
 # Plays used: real go-for-it attempts (not fake kicks, not botched snaps),
 # the same plays as the conversion rates in 02_filter_plays.py.
-# The logistic fit uses each play's exact ydstogo. For the 10+ group the fitted
-# value is the average fitted chance over those plays (they range from 10 to
-# 34 yards to go), so it compares fairly with the raw 10+ rate.
+# c(t) is the raw conversion rate for each t. Every group has 30+ plays, so no
+# smoothing fit is needed. In the model a 10+ conversion gains exactly 10 yards.
 go = pd.read_csv(DATA_DIR / "fourth_down_attempts.csv")
 go = go[(go["is_fake_kick"] == 0) & (go["is_botched_snap"] == 0)].copy()
-c_coef = fit_logistic(go["ydstogo"], go["fourth_down_converted"])
-go["fitted"] = logistic(c_coef, go["ydstogo"])
 go["t"] = go["ydstogo"].clip(upper=T_MAX)
 
 c_table = go.groupby("t").agg(
     attempts=("fourth_down_converted", "size"),
     conversions=("fourth_down_converted", "sum"),
-    raw_rate=("fourth_down_converted", "mean"),
-    fitted_rate=("fitted", "mean"),
+    conversion_rate=("fourth_down_converted", "mean"),
 ).reset_index()
 c_table = flag_small(c_table, "attempts")
-c_table.round(4).to_csv(OUT_DIR / "c_conversion.csv", index=False)
+c_table.round(6).to_csv(OUT_DIR / "c_conversion.csv", index=False)
 
 print("========== c_conversion.csv (t = 10 means 10 or more) ==========")
-print(f"Plays used: {len(go):,}. Logistic fit: a = {c_coef[0]:.4f}, b = {c_coef[1]:.4f}")
-print((c_table.assign(gap=c_table["raw_rate"] - c_table["fitted_rate"])).round(3).to_string(index=False))
+print(f"Plays used: {len(go):,}")
+print(c_table.round(3).to_string(index=False))
 print_flags(c_table, "yards to go", ["t", "attempts"])
 
 # ===============================================================
@@ -151,13 +149,10 @@ print(f"Kicks used: {len(fg):,}. Logistic fit: a = {g_coef[0]:.4f}, b = {g_coef[
 print((g_table.assign(gap=g_table["raw_rate"] - g_table["fitted_rate"])).round(3).to_string(index=False))
 print_flags(g_table, "distance", ["distance_bucket", "attempts"])
 
-# Save both fits so the solver can compute c or g at any single yard.
+# Save the fit so the solver can compute g at any single yard.
 pd.DataFrame({
-    "fit": ["c_conversion", "g_fieldgoal"],
-    "x": ["ydstogo", "kick_distance"],
-    "intercept_a": [c_coef[0], g_coef[0]],
-    "slope_b": [c_coef[1], g_coef[1]],
-    "plays": [len(go), len(fg)],
+    "fit": ["g_fieldgoal"], "x": ["kick_distance"],
+    "intercept_a": [g_coef[0]], "slope_b": [g_coef[1]], "plays": [len(fg)],
 }).to_csv(OUT_DIR / "logistic_fits.csv", index=False)
 
 # ===============================================================
@@ -216,19 +211,30 @@ print(f"S = {S_mean:.2f} -> rounded to yardline_100 {S_yard} (own {100 - S_yard}
 # Defensive scores (Opp touchdown, Safety) count as no score, since the model
 # leaves out defensive scores. All seasons are used: how a drive ends from a
 # given spot does not depend on the kickoff rules.
+#
+# Drives that ended because the half or game ran out ("End of half") are left
+# out of D and A. Most started in the last 2 minutes of a half (many are
+# kneel downs after an onside kick). The model handles the clock through M,
+# the number of possessions left, so a drive in the model always plays out.
 drives["start_bucket"] = bucket(drives["start_yardline_100"])
 drives["is_td"] = (drives["drive_result"] == "Touchdown").astype(int)
 drives["is_fg"] = (drives["drive_result"] == "Field goal").astype(int)
+end_of_half = drives["drive_result"] == "End of half"
+played_out = drives[~end_of_half]
 
-d_table = drives.groupby("start_bucket").agg(
-    drives=("is_td", "size"), p_td=("is_td", "mean"), p_fg=("is_fg", "mean"),
+d_table = played_out.groupby("start_bucket").agg(
+    drives=("is_td", "size"), td_drives=("is_td", "sum"), fg_drives=("is_fg", "sum"),
 ).reset_index()
+d_table["p_td"] = d_table["td_drives"] / d_table["drives"]
+d_table["p_fg"] = d_table["fg_drives"] / d_table["drives"]
 d_table["p_none"] = 1 - d_table["p_td"] - d_table["p_fg"]
 d_table = flag_small(d_table, "drives")
-d_table.round(4).to_csv(OUT_DIR / "D_drive.csv", index=False)
+d_table.round(6).to_csv(OUT_DIR / "D_drive.csv", index=False)
 
 print("\n========== D_drive.csv ==========")
-print(d_table.round(3).to_string(index=False))
+print(f"End of half drives left out: {int(end_of_half.sum()):,} of {len(drives):,}. "
+      f"Drives used: {len(played_out):,}")
+print(d_table.drop(columns=["td_drives", "fg_drives"]).round(3).to_string(index=False))
 row_sums = d_table[["p_td", "p_fg", "p_none"]].sum(axis=1)
 print(f"  Every row sums to 1: {bool(np.allclose(row_sums, 1))}")
 print_flags(d_table, "start", ["start_bucket", "drives"])
@@ -236,15 +242,16 @@ print_flags(d_table, "start", ["start_bucket", "drives"])
 # ===============================================================
 # A: how our possession starting at S ends
 # ===============================================================
-# Drives that start in S's bucket. Each one ends in exactly one of:
+# Drives that start in S's bucket (End of half drives left out, as in D).
+# Each one ends in exactly one of:
 #   td:          touchdown before any 4th down
 #   fg:          field goal before any 4th down (a kick on 1st to 3rd down,
 #                almost always at the end of a half)
-#   none:        no score before any 4th down (turnover, end of half,
-#                defensive score, missed kick on 1st to 3rd down)
+#   none:        no score before any 4th down (turnover, defensive score,
+#                missed kick on 1st to 3rd down)
 #   fourth_down: the drive reached a 4th down. y and t are where the FIRST
 #                4th down was, whatever happened after it.
-a = drives[drives["start_bucket"] == S_bucket].copy()
+a = played_out[played_out["start_bucket"] == S_bucket].copy()
 reached = a["reached_fourth_down"] == 1
 a["outcome"] = np.select(
     [reached, a["is_td"] == 1, a["is_fg"] == 1],
