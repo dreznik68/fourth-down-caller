@@ -4,7 +4,7 @@ IE 4520 (Stochastic Modeling) Group 4 class project.
 
 We are building a probabilistic dynamic program that recommends the best NFL fourth-down call (go for it, kick a field goal, or punt) by picking the option that gives the highest chance of winning the game.
 
-**Status:** the data is pulled and cleaned, the model inputs are built (`code/05_inputs.py`), and the dynamic program is solved (`code/06_solve.py`). The model is described in `PLAN.md` and in "The model" below.
+**Status:** the data is pulled and cleaned, the model inputs are built (`code/05_inputs.py`), the dynamic program is solved (`code/06_solve.py`), and the website is built (`code/08_website.py`). The model is described in `PLAN.md` and in "The model" below.
 
 **Website:** https://dreznik68.github.io/fourth-down-caller/
 
@@ -37,6 +37,7 @@ This installs:
 - **pyarrow**: reads and writes `.parquet` files
 - **matplotlib**: makes charts
 - **openpyxl**: writes the Excel workbook
+- **segno**: makes the QR code for the printable how-to
 
 ## Getting the data
 
@@ -58,8 +59,9 @@ From the project folder, run these in order:
 | 5 | `python3 code/05_inputs.py` | `data/inputs/` (every input the dynamic program uses, see "The model" below) |
 | 6 | `python3 code/06_solve.py` | `data/results/policy.csv` (best call for every situation) and `outputs/DP_Hand_Check.xlsx` |
 | 7 | `python3 code/07_results.py` | `outputs/results/` (charts, comparison with real coaches, sensitivity tables) |
+| 8 | `python3 code/08_website.py` | the data inside `docs/index.html`, the worked examples in `docs/instructions.html`, and `docs/qr.png` |
 
-Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Scripts 4 and 5 read the files from scripts 2 and 3. Script 6 reads the files from script 5, and script 7 reads the files from scripts 5 and 6. The model itself lives in `code/dp_model.py`, which scripts 6 and 7 both use, so the sensitivity runs use exactly the same model as the main solve. Each script prints checks (row counts, rates) when it finishes.
+Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Scripts 4 and 5 read the files from scripts 2 and 3. Script 6 reads the files from script 5, and scripts 7 and 8 read the files from scripts 5 and 6. The model itself lives in `code/dp_model.py`, which scripts 6 and 7 both use, so the sensitivity runs use exactly the same model as the main solve. Each script prints checks (row counts, rates) when it finishes.
 
 Script 4 also asks LibreOffice (installed in `/Applications`) to recalculate every formula in the workbook and compares each result with the same number computed in pandas. Without LibreOffice it still builds the workbook and skips that check.
 
@@ -79,7 +81,15 @@ Data source: [nflfastR](https://www.nflfastr.com/) play-by-play, loaded with the
 
 The three play files also have `play_id` (to trace each play back to the play-by-play data) and `desc` (the text description of the play).
 
-## The model
+## The website
+
+The tool is at https://dreznik68.github.io/fourth-down-caller/ (GitHub Pages publishes the `docs/` folder).
+
+- `docs/index.html`: the tool, one self-contained page. Pick possessions left, score, field position, and yards to go. It shows the best call, the win probability of all three calls, a one-line "Why?", a decision tree (square = decision, circles = chance, win probability at each end), and the best call for every yards to go at that field position.
+- `docs/instructions.html`: a one-page printable how-to with 3 worked examples and a QR code to the site.
+
+The page does not run the model. `code/08_website.py` embeds the solved results: the best call for every situation, straight from `policy.csv`, and the win probability after each outcome (convert, fail, kick good, kick missed, punt). The page looks these up and multiplies by the outcome chances to draw the tree. Before writing, the script rebuilds every win probability the page will show and checks it against `policy.csv`. **Rerun scripts 6 and 8 whenever the model changes**, then commit `docs/`.
+
 
 A dynamic program with one stage per possession left in the game (M, 1 to 8). We have the ball first and face a fourth down, so odd stages are ours and even stages are the opponent's. At each of our fourth downs it picks go, field goal, or punt to get the highest chance of winning. After the last possession, a win counts 1, a tie 0.5 (standing in for overtime), and a loss 0. The full model is in `PLAN.md`.
 

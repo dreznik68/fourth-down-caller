@@ -4,3 +4,4 @@ polars
 pyarrow
 matplotlib
 openpyxl
+segno
