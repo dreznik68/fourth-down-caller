@@ -47,6 +47,7 @@ OUT_DIR.mkdir(exist_ok=True)
 BUCKET_SIZE = 5    # yards per field position bucket
 T_MAX = 10         # yards to go of 10 or more go in one group, t = 10
 MIN_COUNT = 30     # groups with fewer plays or drives than this are flagged
+G_MAX_KICK = 64    # longest field goal the model will try; anything longer has g = 0
 
 # Kickoff rules changed in 2024. If the average start spot in 2024 and 2025
 # differs from 2018 to 2023 by at least this many yards, S uses 2024 and 2025 only.
@@ -108,12 +109,14 @@ print_flags(c_table, "yards to go", ["t", "attempts"])
 #
 # g(k) is the raw make rate of k's 5-yard distance bucket, like c(t). A bucket
 # with fewer than 30 kicks is merged into its neighbor toward the middle (the
-# 15 bucket joins 20, and 65 and 70 join 60 to make one 60+ bucket).
-# Kicks longer than the longest make in the data get g = 0, because there is
-# no evidence those kicks can be made.
-fg = pd.read_csv(DATA_DIR / "field_goals.csv")
+# 15 bucket joins 20). Kicks longer than G_MAX_KICK get g = 0: only a few have
+# ever been tried (by strong kickers in good conditions), so their make rate
+# would overstate a typical team's chance. They are left out of the table.
+fg_all = pd.read_csv(DATA_DIR / "field_goals.csv")
+fg = fg_all[fg_all["kick_distance"] <= G_MAX_KICK].copy()
 fg["distance_bucket"] = bucket(fg["kick_distance"])
 counts = fg.groupby("distance_bucket")["made"].agg(["size", "sum"])
+
 
 def kicks_in(group):
     """Number of kicks in a group of 5-yard buckets."""
@@ -129,10 +132,9 @@ while kicks_in(groups[-1]) < MIN_COUNT:       # merge small buckets at the long 
     groups[-1] = groups[-1] + last
 assert all(kicks_in(gr) >= MIN_COUNT for gr in groups), "a middle bucket has under 30 kicks"
 
-longest_make = int(fg.loc[fg["made"] == 1, "kick_distance"].max())
 g_table = pd.DataFrame([{
     "kick_min": gr[0],
-    "kick_max": longest_make if i == len(groups) - 1 else gr[-1] + BUCKET_SIZE - 1,
+    "kick_max": gr[-1] + BUCKET_SIZE - 1,
     "attempts": int(kicks_in(gr)),
     "makes": int(counts.loc[gr, "sum"].sum()),
 } for i, gr in enumerate(groups)])
@@ -141,8 +143,10 @@ g_table = flag_small(g_table, "attempts")
 g_table.round(6).to_csv(OUT_DIR / "g_fieldgoal.csv", index=False)
 
 print("\n========== g_fieldgoal.csv ==========")
+over = fg_all[fg_all["kick_distance"] > G_MAX_KICK]
 print(f"Kicks used: {len(fg):,}. The first group also covers any shorter kick. "
-      f"Longest make: {longest_make} yards, so g = 0 beyond {longest_make}.")
+      f"g = 0 beyond {G_MAX_KICK} yards ({len(over)} longer kicks left out, "
+      f"{int(over['made'].sum())} made).")
 print(g_table.round(3).to_string(index=False))
 print_flags(g_table, "distance", ["kick_min", "attempts"])
 
