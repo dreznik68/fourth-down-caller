@@ -76,7 +76,8 @@ def lookup(M, d, y, t):
 HC_D, HC_Y, HC_T = -3, [40, 35, 30], [1, 2, 5]
 states = [(HC_D, y, t) for y in HC_Y for t in HC_T]
 c_df = pd.read_csv(IN_DIR / "c_conversion.csv")
-d_df = pd.read_csv(IN_DIR / "D_drive.csv").set_index("start_bucket")
+g_df = pd.read_csv(IN_DIR / "g_fieldgoal.csv").sort_values("kick_min")
+d_df =pd.read_csv(IN_DIR / "D_drive.csv").set_index("start_bucket")
 FONT, BOLD = Font(name="Arial", size=11), Font(name="Arial", size=11, bold=True)
 
 
@@ -108,23 +109,30 @@ for i, t in enumerate(HC_T):
               fmt="0.0000")
 C_RANGE = "$A$4:$D$6"
 
-# g logistic fit. Rows 8 to 9.
-write_row(inp_ws, 8, ["g fit intercept a", inp["g_a"]])
-write_row(inp_ws, 9, ["g fit slope b", inp["g_b"]])
+# g(k): make rate by kick distance group (every group, shortest first).
+G_ROW0 = 9
+write_row(inp_ws, G_ROW0 - 1, ["kick from", "kick to", "attempts", "makes", "g(k)"], bold=True)
+for i, r in enumerate(g_df.itertuples()):
+    row = G_ROW0 + i
+    write_row(inp_ws, row, [r.kick_min, r.kick_max, r.attempts, r.makes, f"=D{row}/C{row}"],
+              fmt="0.0000")
+G_LAST = G_ROW0 + len(g_df) - 1
+G_RANGE = f"$A${G_ROW0}:$E${G_LAST}"
 
-# D for the buckets of y - t that the states land in. Rows 11 to 14.
+# D for the buckets of y - t that the states land in.
+D_ROW0 = G_LAST + 3
 d_buckets = sorted({bi(y - t) * 5 for _, y, t in states})
-write_row(inp_ws, 11, ["D start bucket", "drives", "TD drives", "FG drives", "P_TD", "P_FG", "P_none"],
-          bold=True)
+write_row(inp_ws, D_ROW0 - 1, ["D start bucket", "drives", "TD drives", "FG drives", "P_TD", "P_FG",
+                               "P_none"], bold=True)
 for i, b in enumerate(d_buckets):
-    r, row = d_df.loc[b], 12 + i
+    r, row = d_df.loc[b], D_ROW0 + i
     write_row(inp_ws, row, [b, int(r["drives"]), int(r["td_drives"]), int(r["fg_drives"]),
                             f"=C{row}/B{row}", f"=D{row}/B{row}", f"=1-E{row}-F{row}"], fmt="0.0000")
-D_RANGE = f"$A$12:$G${11 + len(d_buckets)}"
+D_RANGE = f"$A${D_ROW0}:$G${D_ROW0 + len(d_buckets) - 1}"
 
-# One row per state with every number its formulas use. Rows 17 onward.
-STATE_ROW0 = 17
-write_row(inp_ws, 16, ["state", "d", "y", "t", "c(t)", "y - t", "D bucket", "P_TD", "P_FG", "P_none",
+# One row per state with every number its formulas use.
+STATE_ROW0 = D_ROW0 + len(d_buckets) + 2
+write_row(inp_ws, STATE_ROW0 - 1, ["state", "d", "y", "t", "c(t)", "y - t", "D bucket", "P_TD", "P_FG", "P_none",
                        "kick distance", "g(y + 17)", "f*_2(d + 7)", "f*_2(d + 3)", "f*_2(d)"], bold=True)
 for i, (d, y, t) in enumerate(states):
     r = STATE_ROW0 + i
@@ -137,7 +145,9 @@ for i, (d, y, t) in enumerate(states):
         f"=VLOOKUP(G{r},{D_RANGE},6,FALSE)",
         f"=VLOOKUP(G{r},{D_RANGE},7,FALSE)",
         f"=C{r}+17",
-        f"=1/(1+EXP(-($B$8+$B$9*K{r})))",
+        # The group whose "kick from" is the largest one at or below the kick
+        # distance; 0 if the kick is longer than the longest make.
+        f"=IF(K{r}>$B${G_LAST},0,VLOOKUP(K{r},{G_RANGE},5,TRUE))",
         boundary(f"B{r}+7"), boundary(f"B{r}+3"), boundary(f"B{r}"),
     ], fmt="0.0000")
 note_row = STATE_ROW0 + len(states) + 1

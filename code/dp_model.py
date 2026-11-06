@@ -26,7 +26,6 @@ Field position:
     makes it 4th and goal.
 """
 
-import math
 from pathlib import Path
 
 import numpy as np
@@ -61,7 +60,7 @@ def load_inputs():
     """Read data/inputs into a dict. Probabilities are recomputed from the
     counts so they are exact (the CSVs show rounded values)."""
     c_df = pd.read_csv(IN_DIR / "c_conversion.csv")
-    g_fit = pd.read_csv(IN_DIR / "logistic_fits.csv").set_index("fit").loc["g_fieldgoal"]
+    g_df = pd.read_csv(IN_DIR / "g_fieldgoal.csv").sort_values("kick_min")
     p_df = pd.read_csv(IN_DIR / "P_punt.csv")
     d_df = pd.read_csv(IN_DIR / "D_drive.csv").set_index("start_bucket").sort_index()
     assert list(d_df.index) == list(range(0, 100, 5)), "D_drive.csv must have buckets 0 to 95"
@@ -75,7 +74,8 @@ def load_inputs():
     cells = a_df.loc[a_df["outcome"] == "fourth_down", ["y", "t", "p"]]
     inp = {
         "c": dict(zip(c_df["t"], c_df["conversions"] / c_df["attempts"])),
-        "g_a": g_fit["intercept_a"], "g_b": g_fit["slope_b"],
+        # (longest kick in the group, make rate), shortest group first
+        "g": list(zip(g_df["kick_max"], g_df["makes"] / g_df["attempts"])),
         "punt": dict(zip(p_df["start_bucket"], p_df["mean_net_yards"])),
         # D for the rest of OUR drive after a conversion...
         "d_td": d_td, "d_fg": d_fg,
@@ -93,8 +93,13 @@ def load_inputs():
 
 
 def g(inp, kick_distance):
-    """Field goal make chance from the logistic fit."""
-    return 1 / (1 + math.exp(-(inp["g_a"] + inp["g_b"] * kick_distance)))
+    """Field goal make chance: the raw make rate of the kick's distance group.
+    The shortest group also covers any shorter kick. A kick longer than the
+    longest make in the data gets 0."""
+    for kick_max, rate in inp["g"]:
+        if kick_distance <= kick_max:
+            return rate
+    return 0.0
 
 
 def their_possession(inp, W_next):

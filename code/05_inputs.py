@@ -6,10 +6,8 @@ What this script does:
     in data/inputs/:
         c_conversion.csv     c(t): chance of converting a 4th down with t yards to go
                              (the raw conversion rate, since every group has 30+ plays)
-        g_fieldgoal.csv      g(k): chance of making a field goal of k yards
-                             (logistic fit, shown next to the raw rate by 5-yard bucket)
-        logistic_fits.csv    intercept and slope of the g logistic fit, so the
-                             solver can get g at any single yard
+        g_fieldgoal.csv      g(k): chance of making a field goal of k yards (the raw
+                             make rate by 5-yard distance bucket, small buckets merged)
         P_punt.csv           P(y): mean net punt yards by start bucket
         D_drive.csv          D(y): chance a drive starting at y ends in TD, FG, or no score
         A_our_possession.csv A: how our possession starting at S ends (TD, FG, or
@@ -61,29 +59,6 @@ def bucket(values):
     return (np.floor(np.asarray(values, dtype=float) / BUCKET_SIZE) * BUCKET_SIZE).astype(int)
 
 
-def fit_logistic(x, y):
-    """Fit P(y = 1) = 1 / (1 + exp(-(a + b * x))) by maximum likelihood.
-    Uses Newton's method, the standard way to fit a logistic regression.
-    Returns (a, b)."""
-    X = np.column_stack([np.ones(len(x)), np.asarray(x, dtype=float)])
-    y = np.asarray(y, dtype=float)
-    coef = np.zeros(2)
-    for _ in range(50):
-        p = logistic(coef, X[:, 1])
-        gradient = X.T @ (y - p)
-        hessian = X.T @ (X * (p * (1 - p))[:, None])
-        step = np.linalg.solve(hessian, gradient)
-        coef += step
-        if np.abs(step).max() < 1e-10:
-            break
-    return coef
-
-
-def logistic(coef, x):
-    """Fitted probability at x for coefficients (a, b)."""
-    return 1 / (1 + np.exp(-(coef[0] + coef[1] * np.asarray(x, dtype=float))))
-
-
 def flag_small(df, count_col):
     """Add low_count = 1 for groups with fewer than MIN_COUNT plays or drives."""
     df["low_count"] = (df[count_col] < MIN_COUNT).astype(int)
@@ -130,30 +105,46 @@ print_flags(c_table, "yards to go", ["t", "attempts"])
 # Uses all kicks (the kick does not depend on the down), as in 02_filter_plays.py.
 # The model asks for g(y + 17): the ball is snapped 7 yards behind the line of
 # scrimmage and the goal posts are 10 yards behind the goal line.
+#
+# g(k) is the raw make rate of k's 5-yard distance bucket, like c(t). A bucket
+# with fewer than 30 kicks is merged into its neighbor toward the middle (the
+# 15 bucket joins 20, and 65 and 70 join 60 to make one 60+ bucket).
+# Kicks longer than the longest make in the data get g = 0, because there is
+# no evidence those kicks can be made.
 fg = pd.read_csv(DATA_DIR / "field_goals.csv")
-g_coef = fit_logistic(fg["kick_distance"], fg["made"])
-fg["fitted"] = logistic(g_coef, fg["kick_distance"])
 fg["distance_bucket"] = bucket(fg["kick_distance"])
+counts = fg.groupby("distance_bucket")["made"].agg(["size", "sum"])
 
-g_table = fg.groupby("distance_bucket").agg(
-    attempts=("made", "size"),
-    makes=("made", "sum"),
-    raw_rate=("made", "mean"),
-    fitted_rate=("fitted", "mean"),
-).reset_index()
+def kicks_in(group):
+    """Number of kicks in a group of 5-yard buckets."""
+    return counts.loc[group, "size"].sum()
+
+
+groups = [[b] for b in counts.index]          # each group is a list of 5-yard buckets
+while kicks_in(groups[0]) < MIN_COUNT:        # merge small buckets at the short end upward
+    first = groups.pop(0)
+    groups[0] = first + groups[0]
+while kicks_in(groups[-1]) < MIN_COUNT:       # merge small buckets at the long end downward
+    last = groups.pop()
+    groups[-1] = groups[-1] + last
+assert all(kicks_in(gr) >= MIN_COUNT for gr in groups), "a middle bucket has under 30 kicks"
+
+longest_make = int(fg.loc[fg["made"] == 1, "kick_distance"].max())
+g_table = pd.DataFrame([{
+    "kick_min": gr[0],
+    "kick_max": longest_make if i == len(groups) - 1 else gr[-1] + BUCKET_SIZE - 1,
+    "attempts": int(kicks_in(gr)),
+    "makes": int(counts.loc[gr, "sum"].sum()),
+} for i, gr in enumerate(groups)])
+g_table["make_rate"] = g_table["makes"] / g_table["attempts"]
 g_table = flag_small(g_table, "attempts")
-g_table.round(4).to_csv(OUT_DIR / "g_fieldgoal.csv", index=False)
+g_table.round(6).to_csv(OUT_DIR / "g_fieldgoal.csv", index=False)
 
-print("\n========== g_fieldgoal.csv (bucket 40 = kicks of 40 to 44 yards) ==========")
-print(f"Kicks used: {len(fg):,}. Logistic fit: a = {g_coef[0]:.4f}, b = {g_coef[1]:.4f}")
-print((g_table.assign(gap=g_table["raw_rate"] - g_table["fitted_rate"])).round(3).to_string(index=False))
-print_flags(g_table, "distance", ["distance_bucket", "attempts"])
-
-# Save the fit so the solver can compute g at any single yard.
-pd.DataFrame({
-    "fit": ["g_fieldgoal"], "x": ["kick_distance"],
-    "intercept_a": [g_coef[0]], "slope_b": [g_coef[1]], "plays": [len(fg)],
-}).to_csv(OUT_DIR / "logistic_fits.csv", index=False)
+print("\n========== g_fieldgoal.csv ==========")
+print(f"Kicks used: {len(fg):,}. The first group also covers any shorter kick. "
+      f"Longest make: {longest_make} yards, so g = 0 beyond {longest_make}.")
+print(g_table.round(3).to_string(index=False))
+print_flags(g_table, "distance", ["kick_min", "attempts"])
 
 # ===============================================================
 # P(y): mean net punt yards by start bucket
