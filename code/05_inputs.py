@@ -1,0 +1,308 @@
+"""
+05_inputs.py
+
+What this script does:
+    Builds every input the dynamic program needs (see PLAN.md) and saves them
+    in data/inputs/:
+        c_conversion.csv     c(t): chance of converting a 4th down with t yards to go
+        g_fieldgoal.csv      g(k): chance of making a field goal of k yards (by 5-yard bucket)
+        logistic_fits.csv    intercept and slope of the two logistic fits, so the
+                             solver can get c or g at any single yard
+        P_punt.csv           P(y): mean net punt yards by start bucket
+        D_drive.csv          D(y): chance a drive starting at y ends in TD, FG, or no score
+        A_our_possession.csv A: how our possession starting at S ends (TD, FG, or
+                             no score before any 4th down, or the first 4th down at (y, t))
+        S_start.txt          S: average start spot for a new possession
+        M_guide.csv          typical number of possessions left (M) by minutes left in Q4
+    It prints checks: each probability table sums to 1, counts per group
+    (groups under 30 are flagged), and the M guide at 10, 5, and 2 minutes left.
+
+How to run (from the project root folder):
+    python3 code/05_inputs.py
+
+Needs:
+    data/fourth_down_attempts.csv, data/field_goals.csv,
+    data/punt_mean_sd_by_bucket.csv (from 02_filter_plays.py)
+    data/drives.csv (from 03_build_drives.py)
+
+Notation:
+    y = yardline_100 (yards from the opponent's end zone), in 5-yard buckets
+        named by their lowest value: bucket 40 means yardline_100 40 to 44.
+    t = yards to go, 1 to 9, and 10 means "10 or more".
+"""
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+# ---------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
+OUT_DIR = DATA_DIR / "inputs"
+OUT_DIR.mkdir(exist_ok=True)
+
+BUCKET_SIZE = 5    # yards per field position bucket
+T_MAX = 10         # yards to go of 10 or more go in one group, t = 10
+MIN_COUNT = 30     # groups with fewer plays or drives than this are flagged
+
+# Kickoff rules changed in 2024. If the average start spot in 2024 and 2025
+# differs from 2018 to 2023 by at least this many yards, S uses 2024 and 2025 only.
+NEW_KICKOFF_SEASONS = [2024, 2025]
+S_CHANGE_YARDS = 1.0
+
+
+def bucket(values):
+    """Round each yardline down to the start of its 5-yard bucket (43 -> 40)."""
+    return (np.floor(np.asarray(values, dtype=float) / BUCKET_SIZE) * BUCKET_SIZE).astype(int)
+
+
+def fit_logistic(x, y):
+    """Fit P(y = 1) = 1 / (1 + exp(-(a + b * x))) by maximum likelihood.
+    Uses Newton's method, the standard way to fit a logistic regression.
+    Returns (a, b)."""
+    X = np.column_stack([np.ones(len(x)), np.asarray(x, dtype=float)])
+    y = np.asarray(y, dtype=float)
+    coef = np.zeros(2)
+    for _ in range(50):
+        p = logistic(coef, X[:, 1])
+        gradient = X.T @ (y - p)
+        hessian = X.T @ (X * (p * (1 - p))[:, None])
+        step = np.linalg.solve(hessian, gradient)
+        coef += step
+        if np.abs(step).max() < 1e-10:
+            break
+    return coef
+
+
+def logistic(coef, x):
+    """Fitted probability at x for coefficients (a, b)."""
+    return 1 / (1 + np.exp(-(coef[0] + coef[1] * np.asarray(x, dtype=float))))
+
+
+def flag_small(df, count_col):
+    """Add low_count = 1 for groups with fewer than MIN_COUNT plays or drives."""
+    df["low_count"] = (df[count_col] < MIN_COUNT).astype(int)
+    return df
+
+
+def print_flags(df, name, key_cols):
+    """Print which groups (if any) are under MIN_COUNT."""
+    small = df[df["low_count"] == 1]
+    if len(small) == 0:
+        print(f"  All {name} groups have {MIN_COUNT} or more.")
+    else:
+        print(f"  FLAG: {len(small)} {name} group(s) under {MIN_COUNT}: "
+              f"{small[key_cols].to_dict('records')}")
+
+
+# ===============================================================
+# c(t): conversion chance by yards to go
+# ===============================================================
+# Plays used: real go-for-it attempts (not fake kicks, not botched snaps),
+# the same plays as the conversion rates in 02_filter_plays.py.
+# The logistic fit uses each play's exact ydstogo. For the 10+ group the fitted
+# value is the average fitted chance over those plays (they range from 10 to
+# 34 yards to go), so it compares fairly with the raw 10+ rate.
+go = pd.read_csv(DATA_DIR / "fourth_down_attempts.csv")
+go = go[(go["is_fake_kick"] == 0) & (go["is_botched_snap"] == 0)].copy()
+c_coef = fit_logistic(go["ydstogo"], go["fourth_down_converted"])
+go["fitted"] = logistic(c_coef, go["ydstogo"])
+go["t"] = go["ydstogo"].clip(upper=T_MAX)
+
+c_table = go.groupby("t").agg(
+    attempts=("fourth_down_converted", "size"),
+    conversions=("fourth_down_converted", "sum"),
+    raw_rate=("fourth_down_converted", "mean"),
+    fitted_rate=("fitted", "mean"),
+).reset_index()
+c_table = flag_small(c_table, "attempts")
+c_table.round(4).to_csv(OUT_DIR / "c_conversion.csv", index=False)
+
+print("========== c_conversion.csv (t = 10 means 10 or more) ==========")
+print(f"Plays used: {len(go):,}. Logistic fit: a = {c_coef[0]:.4f}, b = {c_coef[1]:.4f}")
+print((c_table.assign(gap=c_table["raw_rate"] - c_table["fitted_rate"])).round(3).to_string(index=False))
+print_flags(c_table, "yards to go", ["t", "attempts"])
+
+# ===============================================================
+# g(k): field goal make chance by kick distance
+# ===============================================================
+# Uses all kicks (the kick does not depend on the down), as in 02_filter_plays.py.
+# The model asks for g(y + 17): the ball is snapped 7 yards behind the line of
+# scrimmage and the goal posts are 10 yards behind the goal line.
+fg = pd.read_csv(DATA_DIR / "field_goals.csv")
+g_coef = fit_logistic(fg["kick_distance"], fg["made"])
+fg["fitted"] = logistic(g_coef, fg["kick_distance"])
+fg["distance_bucket"] = bucket(fg["kick_distance"])
+
+g_table = fg.groupby("distance_bucket").agg(
+    attempts=("made", "size"),
+    makes=("made", "sum"),
+    raw_rate=("made", "mean"),
+    fitted_rate=("fitted", "mean"),
+).reset_index()
+g_table = flag_small(g_table, "attempts")
+g_table.round(4).to_csv(OUT_DIR / "g_fieldgoal.csv", index=False)
+
+print("\n========== g_fieldgoal.csv (bucket 40 = kicks of 40 to 44 yards) ==========")
+print(f"Kicks used: {len(fg):,}. Logistic fit: a = {g_coef[0]:.4f}, b = {g_coef[1]:.4f}")
+print((g_table.assign(gap=g_table["raw_rate"] - g_table["fitted_rate"])).round(3).to_string(index=False))
+print_flags(g_table, "distance", ["distance_bucket", "attempts"])
+
+# Save both fits so the solver can compute c or g at any single yard.
+pd.DataFrame({
+    "fit": ["c_conversion", "g_fieldgoal"],
+    "x": ["ydstogo", "kick_distance"],
+    "intercept_a": [c_coef[0], g_coef[0]],
+    "slope_b": [c_coef[1], g_coef[1]],
+    "plays": [len(go), len(fg)],
+}).to_csv(OUT_DIR / "logistic_fits.csv", index=False)
+
+# ===============================================================
+# P(y): mean net punt yards by start bucket
+# ===============================================================
+# Already computed in 02_filter_plays.py. Start bucket 35 holds every punt from
+# yardline_100 39 or less, so the solver uses bucket 35 for any y under 40.
+p_table = pd.read_csv(DATA_DIR / "punt_mean_sd_by_bucket.csv")
+p_table = flag_small(p_table, "punts")
+p_table.to_csv(OUT_DIR / "P_punt.csv", index=False)
+
+print("\n========== P_punt.csv ==========")
+print(p_table.to_string(index=False))
+print_flags(p_table, "punt start", ["start_bucket", "punts"])
+
+# ===============================================================
+# S: average start spot for a new possession
+# ===============================================================
+# Every drive in drives.csv starts either after a kickoff or after the other
+# team's drive ended with no score, so S is the average start over all drives.
+# The model works in whole yards, so S is rounded to the nearest yard before
+# finding its bucket.
+drives = pd.read_csv(DATA_DIR / "drives.csv")
+by_season = drives.groupby("season")["start_yardline_100"].mean()
+new_rules = drives["season"].isin(NEW_KICKOFF_SEASONS)
+old_mean = drives.loc[~new_rules, "start_yardline_100"].mean()
+new_mean = drives.loc[new_rules, "start_yardline_100"].mean()
+
+use_new = abs(new_mean - old_mean) >= S_CHANGE_YARDS
+s_drives = drives[new_rules] if use_new else drives
+S_mean = s_drives["start_yardline_100"].mean()
+S_yard = int(round(S_mean))
+S_bucket = int(bucket([S_yard])[0])
+seasons_used = f"{s_drives['season'].min()} to {s_drives['season'].max()}"
+
+with open(OUT_DIR / "S_start.txt", "w") as f:
+    f.write("# S = average start spot (yardline_100) for a new possession, from drives.csv\n")
+    f.write(f"# Seasons used: {seasons_used} ({len(s_drives):,} drives)\n")
+    f.write(f"S_mean={S_mean:.2f}\n")
+    f.write(f"S_yardline={S_yard}\n")
+    f.write(f"S_bucket={S_bucket}\n")
+
+print("\n========== S_start.txt ==========")
+print("Average start yardline_100 by season (all drives):")
+print(by_season.round(2).to_string())
+print(f"2018 to 2023: {old_mean:.2f}, 2024 to 2025: {new_mean:.2f}, "
+      f"difference {new_mean - old_mean:+.2f} yards")
+print(f"Use 2024 and 2025 only: {use_new} (rule: difference of {S_CHANGE_YARDS} yard or more)")
+print(f"S = {S_mean:.2f} -> rounded to yardline_100 {S_yard} (own {100 - S_yard}), "
+      f"bucket {S_bucket} ({len(s_drives):,} drives, {seasons_used})")
+
+# ===============================================================
+# D(y): how a drive starting at y ends
+# ===============================================================
+# TD (+7) if drive_result is Touchdown, FG (+3) if Field goal, otherwise no score.
+# Defensive scores (Opp touchdown, Safety) count as no score, since the model
+# leaves out defensive scores. All seasons are used: how a drive ends from a
+# given spot does not depend on the kickoff rules.
+drives["start_bucket"] = bucket(drives["start_yardline_100"])
+drives["is_td"] = (drives["drive_result"] == "Touchdown").astype(int)
+drives["is_fg"] = (drives["drive_result"] == "Field goal").astype(int)
+
+d_table = drives.groupby("start_bucket").agg(
+    drives=("is_td", "size"), p_td=("is_td", "mean"), p_fg=("is_fg", "mean"),
+).reset_index()
+d_table["p_none"] = 1 - d_table["p_td"] - d_table["p_fg"]
+d_table = flag_small(d_table, "drives")
+d_table.round(4).to_csv(OUT_DIR / "D_drive.csv", index=False)
+
+print("\n========== D_drive.csv ==========")
+print(d_table.round(3).to_string(index=False))
+row_sums = d_table[["p_td", "p_fg", "p_none"]].sum(axis=1)
+print(f"  Every row sums to 1: {bool(np.allclose(row_sums, 1))}")
+print_flags(d_table, "start", ["start_bucket", "drives"])
+
+# ===============================================================
+# A: how our possession starting at S ends
+# ===============================================================
+# Drives that start in S's bucket. Each one ends in exactly one of:
+#   td:          touchdown before any 4th down
+#   fg:          field goal before any 4th down (a kick on 1st to 3rd down,
+#                almost always at the end of a half)
+#   none:        no score before any 4th down (turnover, end of half,
+#                defensive score, missed kick on 1st to 3rd down)
+#   fourth_down: the drive reached a 4th down. y and t are where the FIRST
+#                4th down was, whatever happened after it.
+a = drives[drives["start_bucket"] == S_bucket].copy()
+reached = a["reached_fourth_down"] == 1
+a["outcome"] = np.select(
+    [reached, a["is_td"] == 1, a["is_fg"] == 1],
+    ["fourth_down", "td", "fg"],
+    default="none",
+)
+a["y"] = np.where(reached, bucket(a["first_4th_yardline_100"].fillna(0)), np.nan)
+a["t"] = np.where(reached, a["first_4th_ydstogo"].clip(upper=T_MAX), np.nan)
+
+a_table = (a.groupby(["outcome", "y", "t"], dropna=False).size().rename("drives").reset_index())
+a_table["probability"] = a_table["drives"] / len(a)
+order = {"td": 0, "fg": 1, "none": 2, "fourth_down": 3}
+a_table = a_table.sort_values(["outcome", "y", "t"], key=lambda s: s.map(order) if s.name == "outcome" else s)
+a_table.insert(0, "start_bucket", S_bucket)
+a_table["y"] = a_table["y"].astype("Int64")
+a_table["t"] = a_table["t"].astype("Int64")
+a_table = flag_small(a_table, "drives")
+a_table.round(6).to_csv(OUT_DIR / "A_our_possession.csv", index=False)
+
+print(f"\n========== A_our_possession.csv (drives starting in bucket {S_bucket}) ==========")
+print(f"Drives used: {len(a):,} (all seasons)")
+summary = a_table.groupby("outcome", sort=False).agg(rows=("drives", "size"),
+                                                     drives=("drives", "sum"),
+                                                     probability=("probability", "sum"))
+print(summary.round(4).to_string())
+print(f"  Probabilities sum to 1: {bool(np.isclose(a_table['probability'].sum(), 1))} "
+      f"(sum = {a_table['probability'].sum():.6f})")
+fourth_rows = a_table[a_table["outcome"] == "fourth_down"]
+small = fourth_rows[fourth_rows["low_count"] == 1]
+print(f"  fourth_down (y, t) cells: {len(fourth_rows)}, of these under {MIN_COUNT} drives: "
+      f"{len(small)}, holding {small['probability'].sum():.3f} of the total probability")
+print_flags(a_table[a_table["outcome"] != "fourth_down"], "non-4th-down outcome", ["outcome", "drives"])
+
+# ===============================================================
+# M guide: possessions left by minutes left in Q4
+# ===============================================================
+# At each whole minute left in the game (15 down to 1), for every game:
+#   M = 1 (the possession in progress) + the number of drives that start later.
+# Only regulation drives count (start_qtr 1 to 4); a tie after M possessions is
+# worth 0.5 in the model, which stands in for overtime.
+regulation = drives[drives["start_qtr"] <= 4]
+all_games = regulation["game_id"].unique()
+guide_rows = []
+for minutes in range(15, 0, -1):
+    later = regulation[regulation["start_game_seconds_remaining"] < 60 * minutes]
+    M = 1 + later.groupby("game_id").size().reindex(all_games, fill_value=0)
+    guide_rows.append({
+        "minutes_left": minutes, "games": len(M), "mean_M": M.mean(), "sd_M": M.std(),
+        "most_common_M": int(M.mode().min()), "share_over_8": (M > 8).mean(),
+    })
+m_guide = flag_small(pd.DataFrame(guide_rows), "games")
+m_guide.round(3).to_csv(OUT_DIR / "M_guide.csv", index=False)
+
+print("\n========== M_guide.csv ==========")
+print(m_guide.round(2).to_string(index=False))
+for minutes in [10, 5, 2]:
+    r = m_guide[m_guide["minutes_left"] == minutes].iloc[0]
+    print(f"  {minutes:>2} minutes left: mean M {r['mean_M']:.2f}, SD {r['sd_M']:.2f}, "
+          f"most common {int(r['most_common_M'])}")
+
+print(f"\nAll inputs saved to: {OUT_DIR}")

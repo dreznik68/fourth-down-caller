@@ -4,7 +4,7 @@ IE 4520 (Stochastic Modeling) Group 4 class project.
 
 We are building a probabilistic dynamic program that recommends the best NFL fourth-down call (go for it, kick a field goal, or punt) by picking the option that gives the highest chance of winning the game.
 
-**Status (week of Nov 2):** the data is pulled and cleaned. The dynamic program model is not built yet.
+**Status (week of Nov 2):** the data is pulled and cleaned. The model inputs are built (`code/05_inputs.py`). The dynamic program solver is next. The model is described in `PLAN.md`.
 
 **Website:** https://dreznik68.github.io/fourth-down-caller/
 
@@ -55,8 +55,9 @@ From the project folder, run these in order:
 | 2 | `python3 code/02_filter_plays.py` | `data/fourth_down_attempts.csv`, `data/field_goals.csv`, `data/punts.csv`, `data/punt_distribution_by_bucket.csv`, `data/punt_mean_sd_by_bucket.csv`, `data/net_punt_hist.png` |
 | 3 | `python3 code/03_build_drives.py` | `data/drives.csv` |
 | 4 | `python3 code/04_team_outputs.py` | `outputs/Week1_Data_Summary.xlsx` (the team workbook) and `data/formula_checks.csv` |
+| 5 | `python3 code/05_inputs.py` | `data/inputs/` (every input the dynamic program uses, see PLAN.md) |
 
-Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Script 4 reads the files from scripts 2 and 3. Each script prints checks (row counts, rates) when it finishes.
+Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Scripts 4 and 5 read the files from scripts 2 and 3. Each script prints checks (row counts, rates) when it finishes.
 
 Script 4 also asks LibreOffice (installed in `/Applications`) to recalculate every formula in the workbook and compares each result with the same number computed in pandas. Without LibreOffice it still builds the workbook and skips that check.
 
