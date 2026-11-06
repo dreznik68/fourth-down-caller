@@ -42,8 +42,11 @@
   .small { font-size: 0.85rem; color: var(--ink2); }
   a { color: var(--ink); }
   @media print {
-    @page { margin: 0.45in; }
-    body { font-size: 9.5pt; line-height: 1.35; }
+    @page { margin: 0.4in; }
+    body { font-size: 9pt; line-height: 1.3; }
+    p { margin-bottom: 4px; }
+    li { margin-bottom: 2px; }
+    .qr img { width: 96px; height: 96px; }
     .page { padding: 0; max-width: none; }
     h1 { font-size: 1.45rem; }
     h2 { margin-top: 10px; }
@@ -56,71 +59,77 @@
 <div class="page">
   <div class="top">
     <div>
-      <h1>4th Down Caller: how to use it</h1>
-      <p class="lead">Go for it, kick a field goal, or punt? The tool gives the call with the best chance to win,
-        from a probabilistic dynamic program built on 2018 to 2025 NFL regular season play-by-play.</p>
-      <p><b>Open it:</b> <a href="https://dreznik68.github.io/fourth-down-caller/">dreznik68.github.io/fourth-down-caller</a>
-        (works on a phone, no sign-up)</p>
+      <h1>How to use the 4th Down Caller</h1>
+      <p class="lead">It tells you whether to go for it, kick a field goal, or punt. It picks the call that gives you
+        the best chance to win. We built it from NFL play-by-play data (2018 to 2025 regular seasons).</p>
+      <p><b>Open it:</b> <a href="https://dreznik68.github.io/fourth-down-caller/">dreznik68.github.io/fourth-down-caller</a>.
+        It works on your phone and there is no sign-up.</p>
     </div>
     <div class="qr"><img src="qr.png" alt="QR code to dreznik68.github.io/fourth-down-caller">Scan to open</div>
   </div>
 
   <h2>Four steps</h2>
   <ol>
-    <li><b>Possessions left.</b> Count this possession as 1. Not sure? Pick the minutes left in the 4th quarter
-      under "or from the clock" and the tool fills in the typical number (about 5 with 10 minutes left,
-      3 with 5 minutes, 2 with 2 minutes).</li>
-    <li><b>Score.</b> Your points minus theirs (for example, "Down 3").</li>
-    <li><b>Field position.</b> Where the ball is, in 5-yard groups. "Own 31-35" is your side of the field,
-      "Opp 30-34" is theirs. The tool works out each group at its spot closest to the opponent's goal.</li>
+    <li><b>Possessions left.</b> Count the one you are on now as 1. Not sure? Pick the minutes left under
+      "Or use the clock" and it fills in a typical number. Roughly: 5 with 10 minutes left, 3 with 5, and 2 with 2.</li>
+    <li><b>Score.</b> Your points minus theirs, like "Down 3".</li>
+    <li><b>Field position.</b> Pick the 5-yard range the ball is in. "Own 31-35" is your side of the field and
+      "Opp 30-34" is theirs. The model uses the yard line in that range closest to the end zone you are going for.</li>
     <li><b>Yards to go.</b> 1 to 9, or 10+.</li>
   </ol>
 
   <h2>Reading the answer</h2>
-  <p><b>Best call</b> is in large text, with its chance to win. Under it are the win probabilities for all three calls,
-    and a one-line <b>Why?</b>.</p>
-  <p><b>Decision tree:</b> the square is your decision, each circle is a chance outcome (convert or fail, kick good or
-    missed) with its probability on the branch, and each triangle shows the win probability at the end. Each call's
-    win probability is the outcome chances times the win probability at each end. The calls not taken are crossed out.
-    The punt has no circle because the model uses the average punt from that spot.</p>
-  <p><b>Best call for each yards to go:</b> the strip shows the best call at your field position for every
-    yards to go, so you can see where the answer flips. A dot marks a close call (within 1 point of win probability).
-    Tap a box to switch to it.</p>
+  <p><b>Best call:</b> the big text at the top, with its win chance. Below it you get the win chance for all three
+    calls and a short reason why.</p>
+  <p><b>Decision tree:</b> the square is your call. Each circle is a chance event, like converting or not, or the kick
+    being good or not. The probability is on the branch. Each triangle shows your win chance at the end. A call's win
+    chance is the branch probabilities times the end values, added up. The calls we did not pick are crossed out. The
+    punt has no circle because the model uses the average punt from that spot.</p>
+  <p><b>Best call by yards to go:</b> this strip shows the best call at your field position for every yards to go,
+    so you can see where the answer changes. A dot means it is a close call (less than 1 percentage point apart).
+    Tap a box to jump to it.</p>
   <p class="key"><span><i style="background:var(--go)"></i>Go for it</span><span><i style="background:var(--fg)"></i>Field goal</span><span><i style="background:var(--punt)"></i>Punt</span></p>
 
-  <h2>Three worked examples</h2>
+  <h2>How it works</h2>
+  <p>We set it up as a dynamic program, like in class. Each possession left in the game is a <b>stage</b>. The
+    situation at your 4th down (score, field position, yards to go) is the <b>state</b>. Go for it, field goal, or
+    punt is the <b>decision</b>. We work backward from the end of the game, where a win is 1, a tie is 0.5, and a loss
+    is 0, and at every 4th down we pick the call with the highest win chance.</p>
+
+  <h2>Three examples</h2>
   <div class="examples">
       <!-- EXAMPLES_START -->
       <div class="example">
         <h3>Example 1: Tied, 4th and 1, your own 41 to 45</h3>
-        <p class="inputs">Enter: <b>4</b> possessions left (about 6 to 8 minutes left), <b>Tied</b>,
+        <p class="inputs">Put in: <b>4</b> possessions left (about 6 to 8 minutes left), <b>Tied</b>,
           <b>your own 41 to 45</b>, <b>1</b> yard to go.</p>
-        <p class="answer">Best call: <b>Go for it</b>, by 6.9 points.</p>
-        <p>Win probability: go for it 49.4%, punt 42.5%, field goal 28.6%.</p>
+        <p class="answer">Best call: <b>Go for it</b>. It wins by 6.9 percentage points.</p>
+        <p>Win chance: go for it 49.4%, punt 42.5%, field goal 28.6%.</p>
       </div>
       <div class="example">
         <h3>Example 2: Down 3, 4th and 6, opponent's 30 to 34</h3>
-        <p class="inputs">Enter: <b>2</b> possessions left (about 2 minutes left), <b>Down 3</b>,
+        <p class="inputs">Put in: <b>2</b> possessions left (about 2 minutes left), <b>Down 3</b>,
           <b>opponent's 30 to 34</b>, <b>6</b> yards to go.</p>
-        <p class="answer">Best call: <b>Field goal</b>, by 2.5 points.</p>
-        <p>Win probability: field goal 22.7%, go for it 20.1%, punt 0.0%.</p>
+        <p class="answer">Best call: <b>Field goal</b>. It wins by 2.5 percentage points.</p>
+        <p>Win chance: field goal 22.7%, go for it 20.1%, punt 0.0%.</p>
       </div>
       <div class="example">
         <h3>Example 3: Up 3, 4th and 4, your own 31 to 35</h3>
-        <p class="inputs">Enter: <b>2</b> possessions left (about 2 minutes left), <b>Up 3</b>,
+        <p class="inputs">Put in: <b>2</b> possessions left (about 2 minutes left), <b>Up 3</b>,
           <b>your own 31 to 35</b>, <b>4</b> yards to go.</p>
-        <p class="answer">Best call: <b>Punt</b>, by 7.5 points.</p>
-        <p>Win probability: punt 70.8%, go for it 63.2%, field goal 37.2%.</p>
+        <p class="answer">Best call: <b>Punt</b>. It wins by 7.5 percentage points.</p>
+        <p>Win chance: punt 70.8%, go for it 63.2%, field goal 37.2%.</p>
       </div>
       <!-- EXAMPLES_END -->
   </div>
 
-  <h2>What the model assumes</h2>
-  <p class="small">One fourth-down decision per possession. Both teams otherwise play like a typical NFL team. A
-    punt goes the average net distance for that spot. A new possession (after a score or a kickoff) starts at your own 30.
-    The number of possessions left is known. A tie after the last possession counts as half a win (standing in for
-    overtime). Win probabilities come from league-wide data, not from the two teams playing.</p>
-  <p class="small">IE 4520 Stochastic Modeling, Group 4. Data: nflfastR play-by-play, 2018 to 2025 regular season.</p>
+  <h2>What we assume</h2>
+  <p class="small">There is one 4th-down call per possession. Both teams play like an average NFL team the rest of the
+    time. Punts go the average distance for that spot. After a score or a kickoff, the next drive starts at the 30. You know how
+    many possessions are left. A tie at the end counts as half a win, which is our stand-in for overtime. The chances
+    come from league-wide data, not from the two teams actually playing.</p>
+  <p class="small">Data: nflfastR play-by-play, 2018 to 2025 regular seasons.</p>
+  <p class="small">Made by Group 4 (Aidan Matasar, David Reznik, Charlie Adams, John Atkins), IE 4520, Northeastern.</p>
 </div>
 </body>
 </html>

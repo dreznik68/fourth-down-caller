@@ -14,7 +14,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>4th Down Caller</title>
-<meta name="description" content="Go for it, kick, or punt? The fourth-down call with the best chance to win, from a probabilistic dynamic program built on NFL play-by-play data.">
+<meta name="description" content="Pick a 4th down situation and see if you should go for it, kick, or punt. Built by IE 4520 students from NFL play-by-play data.">
 <style>
   :root {
     color-scheme: light;
@@ -97,6 +97,10 @@
   #resultCard { order: 3; }
   #treeCard { order: 4; }
   #stripCard { order: 5; }
+  #howCard { order: 6; }
+  .how { font-size: 0.88rem; margin: 0 0 6px; }
+  ul.how { padding-left: 18px; }
+  ul.how li { margin-bottom: 4px; }
   @media (min-width: 880px) {
     .layout { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); align-items: start; }
     .col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
@@ -187,12 +191,12 @@
 <div class="wrap">
   <header>
     <h1>4th Down Caller</h1>
-    <p>Go for it, kick, or punt? The call with the best chance to win, from a probabilistic dynamic program built on 2018 to 2025 NFL play-by-play.</p>
+    <p>Should you go for it, kick, or punt? Set up the situation and we show the call that gives you the best chance to win. It runs on NFL play-by-play from 2018 to 2025.</p>
   </header>
 
   <div class="layout">
     <div class="col">
-      <div class="try" id="try"><span>Try this:</span></div>
+      <div class="try" id="try"><span>Try one:</span></div>
 
       <section class="card" id="inputsCard" aria-label="Situation">
         <div class="inputs">
@@ -200,7 +204,7 @@
             <label for="M">Possessions left</label>
             <select id="M"></select>
             <div class="hint" id="mHint"></div>
-            <div class="hint">or from the clock:
+            <div class="hint">Or use the clock:
               <select id="clock" aria-label="Minutes left in the 4th quarter"></select>
             </div>
           </div>
@@ -220,9 +224,21 @@
       </section>
 
       <section class="card" id="stripCard" aria-label="Best call for each yards to go">
-        <h2 id="stripTitle">Best call for each yards to go</h2>
+        <h2 id="stripTitle">Best call by yards to go</h2>
         <div class="strip" id="strip"></div>
         <div class="legend" id="stripLegend"></div>
+      </section>
+
+      <section class="card" id="howCard">
+        <h2>How it works</h2>
+        <p class="how">We set this up as a dynamic program, the same way we did in class.</p>
+        <ul class="how">
+          <li><b>Stages:</b> each possession left in the game is one stage. You and the other team take turns, and you have the ball now.</li>
+          <li><b>State:</b> the situation at your 4th down. That is the score, where the ball is, and yards to go.</li>
+          <li><b>Decision:</b> go for it, kick a field goal, or punt.</li>
+          <li><b>Goal:</b> we work backward from the end of the game. A win counts as 1, a tie as 0.5, and a loss as 0. At every 4th down we pick the call with the highest win chance.</li>
+        </ul>
+        <p class="how">The chances come from real games: how often teams convert, how often kicks are good, how far punts go, and how drives usually end. Both teams are assumed to play like an average NFL team the rest of the time.</p>
       </section>
     </div>
 
@@ -237,18 +253,18 @@
       </section>
 
       <section class="card" id="treeCard">
-        <h2>Decision tree for this 4th down</h2>
-        <p class="sub">Square = your decision, circle = chance, triangle = win probability at the end. The two crossed-out branches are the calls not taken.</p>
+        <h2>The decision tree</h2>
+        <p class="sub">The square is your call. Circles are chance, like converting or not. Each triangle shows your win chance at the end. The two crossed-out branches are the calls we did not pick.</p>
         <div id="tree"></div>
       </section>
     </div>
   </div>
 
   <footer>
-    <a href="instructions.html">Printable how-to with worked examples</a> &middot;
-    <a href="https://github.com/dreznik68/fourth-down-caller">How the model works</a><br>
-    IE 4520 class project. Built from nflfastR play-by-play, 2018 to 2025 regular season. The model assumes league-typical
-    play for both teams, one fourth-down decision per possession, and a known number of possessions left.
+    <a href="instructions.html">Printable how-to with examples</a> &middot;
+    <a href="https://github.com/dreznik68/fourth-down-caller">Code and data notes on GitHub</a><br>
+    Data: nflfastR play-by-play, 2018 to 2025 regular seasons.<br>
+    Made by Group 4 (Aidan Matasar, David Reznik, Charlie Adams, John Atkins), IE 4520, Northeastern.
   </footer>
 </div>
 
@@ -261,6 +277,9 @@ const DATA = /*DATA_START*/{"scale":1000000,"d_out":21,"m_max":8,"grid":[[0,1],[
 const S = DATA.scale, D = DATA.d_out, NG = DATA.grid.length, ND = 2 * D + 1;
 const NAMES = { go: "Go for it", fg: "Field goal", punt: "Punt", any: "Any call" };
 const SHORT = { go: "Go", fg: "FG", punt: "Punt", any: "Any" };
+// How each call reads in a sentence, for the "Why?" line.
+const VERB = { go: "going for it", fg: "kicking", punt: "punting", any: "the others" };
+const cap = (str) => str[0].toUpperCase() + str.slice(1);
 const CODE = { g: "go", f: "fg", p: "punt", a: "any" };
 const CALLS = ["go", "fg", "punt"];
 const gridIndex = new Map(DATA.grid.map(([y, t], i) => [y + "," + t, i]));
@@ -309,24 +328,24 @@ function lookup(M, d, y, t) {
 // The one-line "Why?"
 // ---------------------------------------------------------------
 function why(s) {
-  if (s.best === "any") return `<b>The game is decided either way.</b> Every call gives the same ${pct(s.f.go)} chance to win.`;
+  if (s.best === "any") return `<b>The game is already decided.</b> Every call gives the same ${pct(s.f.go)} chance to win.`;
   const fb = s.f[s.best], fs = s.f[s.second], gap = ((fb - fs) * 100).toFixed(1);
-  const other = NAMES[s.second].toLowerCase();
+  const other = VERB[s.second];
   if (s.M === 1 && s.d + 3 < 0 && s.best === "go")
-    return `<b>Last possession, and a field goal still leaves you behind,</b> so the only way to win is to go for it.`;
+    return `<b>This is your last possession and a field goal is not enough.</b> You have to go for it.`;
   if (s.M === 1 && s.d === -3 && s.best === "fg")
-    return `<b>A ${s.kick}-yard field goal ties the game</b> (good ${pct(s.g)} of the time). Going for it only wins if the drive ends in a touchdown.`;
+    return `<b>A ${s.kick}-yard field goal ties it.</b> Kickers make it ${pct(s.g)} of the time. Going for it only wins if you score a touchdown.`;
   if (s.d + 3 < 0 && s.best === "go")
-    return `<b>A field goal still leaves you behind by ${-(s.d + 3)},</b> so going for it (converted ${pct(s.c)} of the time) is worth more: ${pct(fb)} vs ${pct(fs)}.`;
+    return `<b>A field goal still leaves you down ${-(s.d + 3)}.</b> Teams convert this ${pct(s.c)} of the time, so going for it is the better shot: ${pct(fb)} vs ${pct(fs)}.`;
   if (s.f.punt === 0 && s.best !== "punt")
-    return `<b>Punting cannot win from here,</b> because you would not get the ball back. ${NAMES[s.best]} beats ${other} by ${gap} points.`;
+    return `<b>Punting cannot win here</b> because you will not get the ball back. ${cap(VERB[s.best])} beats ${other} by ${gap} percentage points.`;
   if (fb - fs < 0.01)
-    return `<b>Close call:</b> ${NAMES[s.best].toLowerCase()} beats ${other} by less than 1 point of win probability.`;
+    return `<b>Close call.</b> ${cap(VERB[s.best])} beats ${other} by less than 1 percentage point.`;
   if (s.best === "go")
-    return `<b>Teams convert 4th and ${tText(s.t)} ${pct(s.c)} of the time,</b> enough to beat ${other} by ${gap} points of win probability.`;
+    return `<b>Teams convert 4th and ${tText(s.t)} ${pct(s.c)} of the time.</b> That beats ${other} by ${gap} percentage points.`;
   if (s.best === "fg")
-    return `<b>A ${s.kick}-yard field goal is good ${pct(s.g)} of the time,</b> which beats ${other} by ${gap} points of win probability.`;
-  return `<b>A punt pins them at ${ourView(100 - s.puntStart)}</b>, while a failed try gives them the ball at ${ourView(s.yl)}. Punting wins by ${gap} points.`;
+    return `<b>A ${s.kick}-yard field goal is good ${pct(s.g)} of the time.</b> That beats ${other} by ${gap} percentage points.`;
+  return `<b>A punt pins them at ${ourView(100 - s.puntStart)}.</b> If you go for it and fail, they get the ball at ${ourView(s.yl)}. Punting wins by ${gap} percentage points.`;
 }
 
 // ---------------------------------------------------------------
@@ -342,7 +361,7 @@ function svgEl(tag, attrs, text) {
 function drawTree(s) {
   const W = 370, H = 270;
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
-    "aria-label": `Decision tree: go ${pct(s.f.go)}, field goal ${pct(s.f.fg)}, punt ${pct(s.f.punt)}` });
+    "aria-label": `Decision tree. Win chance: go for it ${pct(s.f.go)}, field goal ${pct(s.f.fg)}, punt ${pct(s.f.punt)}` });
   const ink = "var(--ink)", ink2 = "var(--ink2)", muted = "var(--muted)", gray = "var(--axis)";
   const color = (call) => (s.best === call || s.best === "any") ? `var(--${call})` : gray;
   const width = (call) => (s.best === call ? 2.5 : 1.5);
@@ -377,8 +396,8 @@ function drawTree(s) {
   const branches = [
     ["go", "conv", "Convert", s.c, s.td ? "touchdown" : `1st down at ${ourView(s.yl - s.t)}`],
     ["go", "fail", "Fail", 1 - s.c, `their ball at ${ourView(s.yl)}`],
-    ["fg", "make", "Good", s.g, "up 3 more, kickoff"],
-    ["fg", "miss", "Miss", 1 - s.g, `their ball at ${ourView(100 - s.missStart)}`],
+    ["fg", "make", "Good", s.g, "+3, then you kick off"],
+    ["fg", "miss", "No good", 1 - s.g, `their ball at ${ourView(100 - s.missStart)}`],
   ];
   for (const call of ["go", "fg"]) {
     const y = rows[call], ys = branches.filter((b) => b[0] === call).map((b) => R[b[1]]);
@@ -415,17 +434,17 @@ const state = { M: 4, d: 0, y: 55, t: 1 };
 const guideM = DATA.guide.map(([min, mean]) => [min, Math.min(8, Math.max(1, Math.floor(mean + 0.5)))]);
 function guideText(M) {
   const mins = guideM.filter(([, m]) => m === M).map(([min]) => min);
-  if (!mins.length) return M === 8 ? "More than a full 4th quarter usually has." : "";
+  if (!mins.length) return M === 8 ? "That is more than a 4th quarter usually has." : "";
   const lo = Math.min(...mins), hi = Math.max(...mins);
   const span = lo === hi ? `${lo} minute${lo > 1 ? "s" : ""}` : `${lo} to ${hi} minutes`;
-  return `About ${M} possession${M > 1 ? "s" : ""} with ${span} left in the 4th.`;
+  return `That is typical with ${span} left in the 4th.`;
 }
 
 function fillSelect(sel, items) {
   sel.innerHTML = items.map(([v, label]) => `<option value="${v}">${label}</option>`).join("");
 }
-fillSelect($("M"), [1, 2, 3, 4, 5, 6, 7, 8].map((m) => [m, `${m}${m === 1 ? " (this is the last)" : ""}`]));
-fillSelect($("clock"), [["", "minutes left"]].concat(DATA.guide.map(([min]) => [min, `${min}:00`])));
+fillSelect($("M"), [1, 2, 3, 4, 5, 6, 7, 8].map((m) => [m, `${m}${m === 1 ? " (last one)" : ""}`]));
+fillSelect($("clock"), [["", "Minutes left"]].concat(DATA.guide.map(([min]) => [min, `${min}:00`])));
 fillSelect($("d"), Array.from({ length: ND }, (_, i) => D - i).map((d) => [d, scoreLabel(d)]));
 fillSelect($("y"), Array.from({ length: 20 }, (_, i) => 95 - 5 * i).map((y) => [y, fieldLabel(y)]));
 fillSelect($("t"), Array.from({ length: 10 }, (_, i) => i + 1).map((t) => [t, tText(t)]));
@@ -458,7 +477,7 @@ function render() {
   $("tree").replaceChildren(drawTree(s));
 
   // Policy view: the best call for every yards to go at this field position.
-  $("stripTitle").textContent = `Best call at ${fieldLabel(y)} for each yards to go`;
+  $("stripTitle").textContent = `Best call at ${fieldLabel(y)}, by yards to go`;
   $("strip").innerHTML = Array.from({ length: 10 }, (_, i) => i + 1).map((tt) => {
     if (!validT(y, tt)) return `<button class="cell" disabled><span class="t">${tText(tt)}</span>
       <span class="box" style="background:var(--line);color:var(--muted)">n/a</span></button>`;
@@ -470,7 +489,7 @@ function render() {
     </button>`;
   }).join("");
   $("stripLegend").innerHTML = ["go", "fg", "punt"].map((c) => `<span><i style="background:var(--${c})"></i>${NAMES[c]}</span>`).join("")
-    + `<span>Dot = close call (within 1 point)</span>`;
+    + `<span>Dot = close call (less than 1 percentage point apart)</span>`;
 }
 
 for (const k of ["M", "d", "y", "t"]) $(k).addEventListener("change", (e) => { state[k] = +e.target.value; $("clock").value = ""; render(); });

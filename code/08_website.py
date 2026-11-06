@@ -187,10 +187,10 @@ for i, (M, d, y, t) in enumerate(EXAMPLES, start=1):
     cards.append(f"""
       <div class="example">
         <h3>Example {i}: {score_label(d)}, 4th and {t_text}, {field_label(y)}</h3>
-        <p class="inputs">Enter: <b>{M}</b> possessions left ({minutes_for(M)}), <b>{score_label(d)}</b>,
+        <p class="inputs">Put in: <b>{M}</b> possessions left ({minutes_for(M)}), <b>{score_label(d)}</b>,
           <b>{field_label(y)}</b>, <b>{t_text}</b> yard{"s" if t != 1 else ""} to go.</p>
-        <p class="answer">Best call: <b>{NAMES[r['best']]}</b>, by {r['margin'] * 100:.1f} points.</p>
-        <p>Win probability: {', '.join(f"{NAMES[c].lower()} {probs[c]:.1%}" for c in order)}.</p>
+        <p class="answer">Best call: <b>{NAMES[r['best']]}</b>. It wins by {r['margin'] * 100:.1f} percentage points.</p>
+        <p>Win chance: {', '.join(f"{NAMES[c].lower()} {probs[c]:.1%}" for c in order)}.</p>
       </div>""")
 
 instructions = DOCS / "instructions.html"
