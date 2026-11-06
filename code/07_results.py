@@ -32,7 +32,6 @@ matplotlib.use("Agg")  # save charts to files instead of opening a window
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.lines import Line2D
 from matplotlib.patches import Patch, Rectangle
 
 from dp_model import load_inputs, policy_table, solve
@@ -54,10 +53,14 @@ CASES = [  # (file name, M, d, chart title)
 CLOSE_CALL = 0.01   # best call wins by less than 1 point of win probability
 SHIFT = 0.10        # sensitivity: move a probability by 10 points
 
-# Chart colors: the first three categorical slots (validated as a set), a
-# neutral gray for "any", and recessive ink for text and axes.
-COLORS = {"go": "#2a78d6", "fg": "#eb6834", "punt": "#1baf7a", "any": "#c3c2b7"}
-LABELS = {"go": "Go for it", "fg": "Field goal", "punt": "Punt", "any": "Any (game decided)"}
+# Chart colors: the first three categorical slots (validated as a set) for the
+# calls, a neutral gray for "Close call" (the best call wins by less than 1
+# point, so either is fine), a lighter gray for "any", and recessive ink for
+# text and axes. Close call is gray, not a 4th hue, because it means "no clear
+# winner" and the next palette hue (yellow) is too close to orange in a grid.
+COLORS = {"go": "#2a78d6", "fg": "#eb6834", "punt": "#1baf7a", "close": "#c3c2b7", "any": "#e1e0d9"}
+LABELS = {"go": "Go for it", "fg": "Field goal", "punt": "Punt",
+          "close": "Close call (within 1 point)", "any": "Any (game decided)"}
 SURFACE, INK, INK2, MUTED = "#fcfcfb", "#0b0b0b", "#52514e", "#898781"
 plt.rcParams["font.family"] = ["Arial", "Helvetica", "DejaVu Sans"]
 
@@ -81,8 +84,10 @@ def field_label(y):
 # ===============================================================
 def draw_case(name, M, d, title):
     """Heatmap of the best call. x = field position (we drive left to right),
-    y = yards to go. A white dot marks a close call."""
-    sub = policy[(policy["M"] == M) & (policy["d"] == d)]
+    y = yards to go. Close calls (best call wins by less than 1 point) are gray."""
+    sub = policy[(policy["M"] == M) & (policy["d"] == d)].copy()
+    close = (sub["margin"] < CLOSE_CALL) & (sub["best"] != "any")
+    sub["shown"] = np.where(close, "close", sub["best"])
     fig, ax = plt.subplots(figsize=(10, 4.8), dpi=200)
     fig.patch.set_facecolor(SURFACE)
     ax.set_facecolor(SURFACE)
@@ -90,10 +95,8 @@ def draw_case(name, M, d, title):
     for r in sub.itertuples():
         left = 100 - r.y - 5   # bucket y covers yardline_100 y to y + 4
         # A thin edge in the surface color leaves a small gap between cells.
-        ax.add_patch(Rectangle((left, r.t - 0.5), 5, 1, facecolor=COLORS[r.best],
+        ax.add_patch(Rectangle((left, r.t - 0.5), 5, 1, facecolor=COLORS[r.shown],
                                edgecolor=SURFACE, linewidth=0.75))
-        if r.margin < CLOSE_CALL and r.best != "any":
-            ax.plot(left + 2.5, r.t, "o", ms=2.6, color="white")
 
     ax.set_xlim(0, 100)
     ax.set_ylim(0.5, 10.5)
@@ -108,10 +111,8 @@ def draw_case(name, M, d, title):
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    present = [c for c in ["go", "fg", "punt", "any"] if c in set(sub["best"])]
+    present = [c for c in ["go", "fg", "punt", "close", "any"] if c in set(sub["shown"])]
     handles = [Patch(facecolor=COLORS[c], label=LABELS[c]) for c in present]
-    handles.append(Line2D([], [], marker="o", linestyle="", markersize=5, color=INK2,
-                          label="Close call (within 1 point)"))
     ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.01), ncol=len(handles),
               frameon=False, fontsize=9, labelcolor=INK2, handlelength=1.2, borderaxespad=0)
     fig.text(0.01, 0.97, f"Best fourth-down call: {title}", fontsize=13, fontweight="bold",
@@ -124,12 +125,18 @@ def draw_case(name, M, d, title):
     plt.close(fig)
 
     # The same grid as a table: rows = yards to go, columns = field position.
-    grid = sub.pivot(index="t", columns="y", values="best").sort_index(axis=1, ascending=False)
+    # A close call names the two calls that are within 1 point, best first.
+    ranked = sub[["f_go", "f_fg", "f_punt"]].to_numpy().argsort(axis=1)[:, ::-1]
+    names = np.array(["go", "fg", "punt"])[ranked]
+    second = [row[1] if row[0] == b else row[0] for row, b in zip(names, sub["best"])]
+    sub["label"] = np.where(close, [f"close call ({b} or {o})" for b, o in zip(sub["best"], second)],
+                            sub["best"])
+    grid = sub.pivot(index="t", columns="y", values="label").sort_index(axis=1, ascending=False)
     grid.columns = [field_label(y) for y in grid.columns]
     grid.index = [str(t) if t < 10 else "10+" for t in grid.index]
     grid.index.name = "yards_to_go"
     grid.to_csv(OUT_DIR / f"best_call_{name}.csv")
-    return sub["best"].value_counts(normalize=True)
+    return sub["shown"].value_counts(normalize=True)
 
 
 case_shares = {name: draw_case(name, M, d, title) for name, M, d, title in CASES}
@@ -305,7 +312,7 @@ own_actual, own_expected = own["fourth_down_converted"].mean(), own["pooled_c"].
 # Summary
 # ===============================================================
 print("========== Summary ==========")
-print("1. Charts (best call share of all states in each chart):")
+print("1. Charts (share of each color in each chart):")
 for name, M, d, title in CASES:
     shares = ", ".join(f"{c} {p:.0%}" for c, p in case_shares[name].items())
     print(f"   {title}: {shares}  -> best_call_{name}.png")

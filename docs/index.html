@@ -29,11 +29,13 @@
     --go: #2a78d6;
     --fg: #eb6834;
     --punt: #1baf7a;
-    --any: #c3c2b7;
+    --close: #c3c2b7;
+    --any: #e1e0d9;
     --on-go: #ffffff;
     --on-fg: #0b0b0b;
     --on-punt: #0b0b0b;
-    --on-any: #0b0b0b;
+    --on-close: #0b0b0b;
+    --on-any: #52514e;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
@@ -49,11 +51,13 @@
       --go: #3987e5;
       --fg: #d95926;
       --punt: #199e70;
-      --any: #5a5955;
+      --close: #5a5955;
+      --any: #2c2c2a;
       --on-go: #ffffff;
       --on-fg: #ffffff;
       --on-punt: #ffffff;
-      --on-any: #f0efec;
+      --on-close: #f0efec;
+      --on-any: #c3c2b7;
     }
   }
   :root[data-theme="dark"] {
@@ -69,11 +73,13 @@
     --go: #3987e5;
     --fg: #d95926;
     --punt: #199e70;
-    --any: #5a5955;
+    --close: #5a5955;
+    --any: #2c2c2a;
     --on-go: #ffffff;
     --on-fg: #ffffff;
     --on-punt: #ffffff;
-    --on-any: #f0efec;
+    --on-close: #f0efec;
+    --on-any: #c3c2b7;
   }
 
   * { box-sizing: border-box; }
@@ -169,7 +175,6 @@
   }
   .cell.sel .box { outline: 2px solid var(--ink); outline-offset: 1px; }
   .cell[disabled] { cursor: default; }
-  .cell .dot { position: absolute; top: 3px; right: 4px; width: 5px; height: 5px; border-radius: 50%; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.78rem; color: var(--ink2); margin-top: 8px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 
@@ -331,6 +336,8 @@ function why(s) {
   if (s.best === "any") return `<b>The game is already decided.</b> Every call gives the same ${pct(s.f.go)} chance to win.`;
   const fb = s.f[s.best], fs = s.f[s.second], gap = ((fb - fs) * 100).toFixed(1);
   const other = VERB[s.second];
+  if (fb - fs < 0.01)
+    return `<b>Close call, either is fine.</b> ${cap(VERB[s.best])} beats ${other} by less than 1 percentage point.`;
   if (s.M === 1 && s.d + 3 < 0 && s.best === "go")
     return `<b>This is your last possession and a field goal is not enough.</b> You have to go for it.`;
   if (s.M === 1 && s.d === -3 && s.best === "fg")
@@ -339,8 +346,6 @@ function why(s) {
     return `<b>A field goal still leaves you down ${-(s.d + 3)}.</b> Teams convert this ${pct(s.c)} of the time, so going for it is the better shot: ${pct(fb)} vs ${pct(fs)}.`;
   if (s.f.punt === 0 && s.best !== "punt")
     return `<b>Punting cannot win here</b> because you will not get the ball back. ${cap(VERB[s.best])} beats ${other} by ${gap} percentage points.`;
-  if (fb - fs < 0.01)
-    return `<b>Close call.</b> ${cap(VERB[s.best])} beats ${other} by less than 1 percentage point.`;
   if (s.best === "go")
     return `<b>Teams convert 4th and ${tText(s.t)} ${pct(s.c)} of the time.</b> That beats ${other} by ${gap} percentage points.`;
   if (s.best === "fg")
@@ -482,14 +487,17 @@ function render() {
     if (!validT(y, tt)) return `<button class="cell" disabled><span class="t">${tText(tt)}</span>
       <span class="box" style="background:var(--line);color:var(--muted)">n/a</span></button>`;
     const r = lookup(M, d, y, tt);
+    // Close call: the best call wins by less than 1 point, so either is fine.
     const close = r.best !== "any" && r.margin < 0.01;
-    return `<button class="cell${tt === t ? " sel" : ""}" data-t="${tt}" aria-label="${tText(tt)} to go: ${NAMES[r.best]}">
+    const shown = close ? "close" : r.best;
+    const label = close ? `Close call, ${NAMES[r.best].toLowerCase()} or ${NAMES[r.second].toLowerCase()}` : NAMES[r.best];
+    return `<button class="cell${tt === t ? " sel" : ""}" data-t="${tt}" aria-label="${tText(tt)} to go: ${label}">
       <span class="t">${tText(tt)}</span>
-      <span class="box" style="background:var(--${r.best});color:var(--on-${r.best})">${SHORT[r.best]}${close ? `<span class="dot" style="background:var(--on-${r.best})"></span>` : ""}</span>
+      <span class="box" style="background:var(--${shown});color:var(--on-${shown})">${close ? "Close" : SHORT[r.best]}</span>
     </button>`;
   }).join("");
   $("stripLegend").innerHTML = ["go", "fg", "punt"].map((c) => `<span><i style="background:var(--${c})"></i>${NAMES[c]}</span>`).join("")
-    + `<span>Dot = close call (less than 1 percentage point apart)</span>`;
+    + `<span><i style="background:var(--close)"></i>Close call (less than 1 percentage point apart)</span>`;
 }
 
 for (const k of ["M", "d", "y", "t"]) $(k).addEventListener("change", (e) => { state[k] = +e.target.value; $("clock").value = ""; render(); });

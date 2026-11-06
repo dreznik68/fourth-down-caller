@@ -14,7 +14,7 @@
   :root {
     color-scheme: light;
     --page: #ffffff; --ink: #0b0b0b; --ink2: #52514e; --line: #e1e0d9;
-    --go: #2a78d6; --fg: #eb6834; --punt: #1baf7a;
+    --go: #2a78d6; --fg: #eb6834; --punt: #1baf7a; --close: #c3c2b7;
   }
   * { box-sizing: border-box; }
   body {
@@ -86,9 +86,9 @@
     chance is the branch probabilities times the end values, added up. The calls we did not pick are crossed out. The
     punt has no circle because the model uses the average punt from that spot.</p>
   <p><b>Best call by yards to go:</b> this strip shows the best call at your field position for every yards to go,
-    so you can see where the answer changes. A dot means it is a close call (less than 1 percentage point apart).
+    so you can see where the answer changes. Gray means it is a close call (less than 1 percentage point apart), so either is fine.
     Tap a box to jump to it.</p>
-  <p class="key"><span><i style="background:var(--go)"></i>Go for it</span><span><i style="background:var(--fg)"></i>Field goal</span><span><i style="background:var(--punt)"></i>Punt</span></p>
+  <p class="key"><span><i style="background:var(--go)"></i>Go for it</span><span><i style="background:var(--fg)"></i>Field goal</span><span><i style="background:var(--punt)"></i>Punt</span><span><i style="background:var(--close)"></i>Close call</span></p>
 
   <h2>How it works</h2>
   <p>We set it up as a dynamic program, like in class. Each possession left in the game is a <b>stage</b>. The
