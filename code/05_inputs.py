@@ -10,8 +10,10 @@ What this script does:
                              make rate by 5-yard distance bucket, small buckets merged)
         P_punt.csv           P(y): mean net punt yards by start bucket
         D_drive.csv          D(y): chance a drive starting at y ends in TD, FG, or no score
-        A_our_possession.csv A: how our possession starting at S ends (TD, FG, or
-                             no score before any 4th down, or the first 4th down at (y, t))
+        A_our_possession.csv A: how our possession starting in each bucket ends (TD, FG,
+                             or no score before any 4th down, or the first 4th down at (y, t))
+        H_handover.csv       where the other team starts after a drive with no score,
+                             by the bucket the drive started in
         S_start.txt          S: average start spot for a new possession
         M_guide.csv          typical number of possessions left (M) by minutes left in Q4
     It prints checks: each probability table sums to 1, counts per group
@@ -64,6 +66,25 @@ def flag_small(df, count_col):
     """Add low_count = 1 for groups with fewer than MIN_COUNT plays or drives."""
     df["low_count"] = (df[count_col] < MIN_COUNT).astype(int)
     return df
+
+
+def merge_small(counts):
+    """Group neighboring buckets so each group has at least MIN_COUNT items.
+    counts is indexed by bucket, smallest first. Buckets are added to a group
+    until it is big enough, then a new group starts. A short group left over
+    at the end joins the one before it. Returns a list of lists of buckets."""
+    groups, current = [], []
+    for b in counts.index:
+        current.append(b)
+        if counts.loc[current].sum() >= MIN_COUNT:
+            groups.append(current)
+            current = []
+    if current:
+        if groups:
+            groups[-1] += current
+        else:
+            groups.append(current)
+    return groups
 
 
 def print_flags(df, name, key_cols):
@@ -123,14 +144,7 @@ def kicks_in(group):
     return counts.loc[group, "size"].sum()
 
 
-groups = [[b] for b in counts.index]          # each group is a list of 5-yard buckets
-while kicks_in(groups[0]) < MIN_COUNT:        # merge small buckets at the short end upward
-    first = groups.pop(0)
-    groups[0] = first + groups[0]
-while kicks_in(groups[-1]) < MIN_COUNT:       # merge small buckets at the long end downward
-    last = groups.pop()
-    groups[-1] = groups[-1] + last
-assert all(kicks_in(gr) >= MIN_COUNT for gr in groups), "a middle bucket has under 30 kicks"
+groups = merge_small(counts["size"])          # each group is a list of 5-yard buckets
 
 g_table = pd.DataFrame([{
     "kick_min": gr[0],
@@ -235,10 +249,13 @@ print(f"  Every row sums to 1: {bool(np.allclose(row_sums, 1))}")
 print_flags(d_table, "start", ["start_bucket", "drives"])
 
 # ===============================================================
-# A: how our possession starting at S ends
+# A: how our possession starting in each bucket ends
 # ===============================================================
-# Drives that start in S's bucket (End of half drives left out, as in D).
-# Each one ends in exactly one of:
+# Drives that start in each bucket (End of half drives left out, as in D).
+# The model used to need A only at S. Now a drive with no score hands the
+# other team the ball where such drives usually end (see H below), so we
+# need our possession from any start bucket. A at S's bucket is unchanged.
+# Each drive ends in exactly one of:
 #   td:          touchdown before any 4th down
 #   fg:          field goal before any 4th down (a kick on 1st to 3rd down,
 #                almost always at the end of a half)
@@ -246,39 +263,98 @@ print_flags(d_table, "start", ["start_bucket", "drives"])
 #                missed kick on 1st to 3rd down)
 #   fourth_down: the drive reached a 4th down. y and t are where the FIRST
 #                4th down was, whatever happened after it.
-a = played_out[played_out["start_bucket"] == S_bucket].copy()
+a = played_out.copy()
 reached = a["reached_fourth_down"] == 1
 a["outcome"] = np.select(
     [reached, a["is_td"] == 1, a["is_fg"] == 1],
     ["fourth_down", "td", "fg"],
     default="none",
 )
+# Yards to go can never be more than the yards to the goal line. One drive
+# breaks this (printed below), so t is capped at the yardline (4th and goal).
+impossible = a[reached & (a["first_4th_ydstogo"] > a["first_4th_yardline_100"])]
 a["y"] = np.where(reached, bucket(a["first_4th_yardline_100"].fillna(0)), np.nan)
-a["t"] = np.where(reached, a["first_4th_ydstogo"].clip(upper=T_MAX), np.nan)
+a["t"] = np.where(reached, np.minimum(a["first_4th_ydstogo"], a["first_4th_yardline_100"]).clip(upper=T_MAX),
+                  np.nan)
 
-a_table = (a.groupby(["outcome", "y", "t"], dropna=False).size().rename("drives").reset_index())
-a_table["probability"] = a_table["drives"] / len(a)
+a_table = (a.groupby(["start_bucket", "outcome", "y", "t"], dropna=False).size()
+           .rename("drives").reset_index())
+a_table["probability"] = a_table["drives"] / a_table.groupby("start_bucket")["drives"].transform("sum")
 order = {"td": 0, "fg": 1, "none": 2, "fourth_down": 3}
-a_table = a_table.sort_values(["outcome", "y", "t"], key=lambda s: s.map(order) if s.name == "outcome" else s)
-a_table.insert(0, "start_bucket", S_bucket)
+a_table = a_table.sort_values(["start_bucket", "outcome", "y", "t"],
+                              key=lambda s: s.map(order) if s.name == "outcome" else s)
 a_table["y"] = a_table["y"].astype("Int64")
 a_table["t"] = a_table["t"].astype("Int64")
 a_table = flag_small(a_table, "drives")
 a_table.round(6).to_csv(OUT_DIR / "A_our_possession.csv", index=False)
 
-print(f"\n========== A_our_possession.csv (drives starting in bucket {S_bucket}) ==========")
+print("\n========== A_our_possession.csv (one table per start bucket) ==========")
 print(f"Drives used: {len(a):,} (all seasons)")
-summary = a_table.groupby("outcome", sort=False).agg(rows=("drives", "size"),
-                                                     drives=("drives", "sum"),
-                                                     probability=("probability", "sum"))
-print(summary.round(4).to_string())
-print(f"  Probabilities sum to 1: {bool(np.isclose(a_table['probability'].sum(), 1))} "
-      f"(sum = {a_table['probability'].sum():.6f})")
-fourth_rows = a_table[a_table["outcome"] == "fourth_down"]
-small = fourth_rows[fourth_rows["low_count"] == 1]
-print(f"  fourth_down (y, t) cells: {len(fourth_rows)}, of these under {MIN_COUNT} drives: "
-      f"{len(small)}, holding {small['probability'].sum():.3f} of the total probability")
-print_flags(a_table[a_table["outcome"] != "fourth_down"], "non-4th-down outcome", ["outcome", "drives"])
+for r in impossible.itertuples():
+    print(f"  Fixed: {r.game_id} drive {r.fixed_drive} lists its first 4th down as 4th and "
+          f"{r.first_4th_ydstogo:.0f} at the {r.first_4th_yardline_100:.0f}. Used as 4th and goal.")
+shares = a_table.pivot_table(index="start_bucket", columns="outcome", values="probability",
+                             aggfunc="sum").fillna(0)[["td", "fg", "none", "fourth_down"]]
+shares.insert(0, "drives", a.groupby("start_bucket").size())
+print(shares.round(3).to_string())
+sums = a_table.groupby("start_bucket")["probability"].sum()
+print(f"  Probabilities sum to 1 in every start bucket: {bool(np.allclose(sums, 1))}")
+s_rows = a_table[a_table["start_bucket"] == S_bucket]
+small = s_rows[(s_rows["outcome"] == "fourth_down") & (s_rows["low_count"] == 1)]
+print(f"  At S's bucket ({S_bucket}): {len(s_rows) - 3} fourth_down (y, t) cells, {len(small)} under "
+      f"{MIN_COUNT} drives, holding {small['probability'].sum():.3f} of the probability")
+
+# ===============================================================
+# H: where the other team starts after a drive with no score
+# ===============================================================
+# The handover of a drive is the next drive in the same game and the same
+# half, if the other team ran it. Its start_yardline_100 is where the other
+# team took over, from their side of the field. Drives with no handover
+# (the other team scored on a return, the half ended, or the game ended) are
+# left out of the averages.
+#   d_start: after any no-score drive from the bucket (punts, turnovers,
+#            turnovers on downs, missed kicks). Used for D: their drives,
+#            and the rest of our drive after a conversion.
+#   a_start: after the no-score drives that ended before any 4th down
+#            (mostly turnovers). Used for A's "none" outcome.
+# A group with fewer than 30 drives is merged into its neighbor, like the kick
+# distance buckets, so every bucket still gets one number. The model rounds
+# each average to the nearest yard, like S.
+drives = drives.sort_values(["game_id", "fixed_drive"]).reset_index(drop=True)
+nxt = drives.groupby("game_id")[["posteam", "start_yardline_100", "start_qtr"]].shift(-1)
+
+
+def half(qtr):
+    """1 = first half, 2 = second half, 3 = overtime."""
+    return np.select([qtr <= 2, qtr <= 4], [1, 2], default=3)
+
+
+drives["handover"] = ((nxt["posteam"] == drives["defteam"])
+                      & (half(drives["start_qtr"]) == half(nxt["start_qtr"].fillna(0))))
+drives["next_start"] = nxt["start_yardline_100"]
+no_score = drives[(drives["drive_result"] != "End of half") & (drives["is_td"] == 0)
+                  & (drives["is_fg"] == 0) & drives["handover"]]
+all_buckets = list(range(0, 100, BUCKET_SIZE))
+
+h_table = pd.DataFrame({"start_bucket": all_buckets})
+for name, rows in [("d", no_score), ("a", no_score[no_score["reached_fourth_down"] == 0])]:
+    grouped = rows.groupby("start_bucket")["next_start"].agg(["size", "sum"]).reindex(all_buckets, fill_value=0)
+    for group in merge_small(grouped["size"]):
+        n, total = grouped.loc[group, "size"].sum(), grouped.loc[group, "sum"].sum()
+        at = h_table["start_bucket"].isin(group)
+        h_table.loc[at, f"{name}_group"] = f"{group[0]} to {group[-1] + BUCKET_SIZE - 1}"
+        h_table.loc[at, f"{name}_drives"] = n
+        h_table.loc[at, f"{name}_mean"] = total / n
+    h_table[f"{name}_start"] = np.floor(h_table[f"{name}_mean"] + 0.5).astype(int)
+    h_table[f"{name}_drives"] = h_table[f"{name}_drives"].astype(int)
+h_table.round(2).to_csv(OUT_DIR / "H_handover.csv", index=False)
+
+print("\n========== H_handover.csv ==========")
+print(f"No-score drives with a handover: {len(no_score):,}. Without H, every one of them "
+      f"would give the other team the ball at S = {S_yard}.")
+print(h_table.round(1).to_string(index=False))
+assert (h_table[["d_drives", "a_drives"]] >= MIN_COUNT).all().all(), "a handover group has under 30 drives"
+print(f"  Every group has {MIN_COUNT} or more drives.")
 
 # ===============================================================
 # M guide: possessions left by minutes left in Q4

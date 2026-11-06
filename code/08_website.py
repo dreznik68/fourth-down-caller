@@ -32,7 +32,7 @@ import pandas as pd
 import segno
 
 from dp_model import (D_OUT, FG_EXTRA_YARDS, GRID, MISSED_FG_BACK, MISSED_FG_MAX, TOUCHBACK,
-                      bi, g, load_inputs, solve)
+                      bi, converted_value, g, load_inputs, solve)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DOCS = PROJECT_ROOT / "docs"
@@ -81,18 +81,17 @@ for y, t in GRID:
 
 # Per (M, d): win probability after each outcome, with M - 1 possessions left.
 #   ob[b]  they get the ball in bucket b (failed go, missed kick, punt)
-#   cv[b]  we converted and the drive goes on from bucket b (TD, FG, or no score, from D)
+#   cv[b]  we converted and the drive goes on from bucket b (TD, FG, or no score,
+#          from D; same as dp_model.converted_value)
 #   mk     we kicked a FG and they start at S
 #   tdv    we scored a TD and they start at S
 values = []
 for M in range(1, M_MAX + 1):
     Ok = O[M - 1]
+    conv = np.column_stack([converted_value(inp, Ok, b) for b in range(len(inp["d_td"]))])
     for d in range(-D_OUT, D_OUT + 1):
         r = row[d]
-        ob = Ok[r]
-        at_s = (Ok[row[d + 7], bs], Ok[row[d + 3], bs], Ok[r, bs])
-        cv = inp["d_td"] * at_s[0] + inp["d_fg"] * at_s[1] + (1 - inp["d_td"] - inp["d_fg"]) * at_s[2]
-        values.append(list(ob) + list(cv) + [at_s[1], at_s[0]])
+        values.append(list(Ok[r]) + list(conv[r]) + [Ok[row[d + 3], bs], Ok[row[d + 7], bs]])
 values = np.rint(np.array(values) * SCALE).astype(int)
 
 # Best call for every state, in the order the page indexes them: M, then d, then (y, t).

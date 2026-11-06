@@ -98,15 +98,16 @@ A dynamic program with one stage per possession left in the game (M, 1 to 8). We
 - **g(k), field goal chance:** the raw make rate for each 5-yard kick distance bucket, from all 8,241 kicks, like c(t). The groups are 15 to 24 yards (the 15 to 19 bucket had fewer than 30 kicks, so it is merged in, and it also covers any shorter kick), 25 to 29, ..., 55 to 59, and 60 to 64. A kick longer than 64 yards gets a 0% chance: only 19 have been tried (5 made), mostly by strong kickers in good conditions, so their rate would overstate a typical team's chance. Kick distance = yardline + 17.
 - **P(y), punt distance:** the average net punt yards for each 5-yard start bucket.
 - **D(y), how a drive ends:** the share of drives from each start bucket that end in a TD (+7), a FG (+3), or no score. The 3,136 "End of half" drives are left out, because the model handles the clock through M.
-- **A, how our possession from S goes:** TD before any fourth down, FG before any fourth down (1.3%, almost all at the end of a half), no score before any fourth down, or the first fourth down at (y, t). From drives starting in S's bucket, End of half drives left out.
-- **S, start spot of a new possession:** 69.57 yards from the opponent's end zone, the 2024 and 2025 average. The 2024 kickoff rule change moved the average start 1.8 yards closer to the opponent than in 2018 to 2023, so we use the new seasons only. Rounded to 70 (your own 30).
+- **A, how our possession goes:** TD before any fourth down, FG before any fourth down (about 1%, almost all at the end of a half), no score before any fourth down, or the first fourth down at (y, t). One table for each start bucket, from the drives that started there, End of half drives left out. (Our possession can start anywhere now, because of H below. The table for S's bucket is the same as before.) One drive, 2018_13_IND_JAX drive 6, lists its first fourth down as 4th and 6 at the 1, which cannot happen, so it is used as 4th and goal.
+- **S, start spot after a score (the kickoff):** 69.57 yards from the opponent's end zone, the 2024 and 2025 average. The 2024 kickoff rule change moved the average start 1.8 yards closer to the opponent than in 2018 to 2023, so we use the new seasons only. Rounded to 70 (your own 30).
+- **H, start spot after a drive with no score (`H_handover.csv`):** for each start bucket, the average spot where the other team took over after drives from that bucket ended with no score. It comes from the next drive in the same game and half, from the other team's side of the field. There are two numbers per bucket: one for D's no-score drives (punts, turnovers, turnovers on downs, missed kicks), and one for A's no-score outcome (mostly turnovers). Groups with fewer than 30 drives are merged with their neighbor, and each average is rounded to the nearest yard, like S. For example, a no-score drive from your own 1 to 5 hands the other team the ball at about their 42, not their 30.
 - **M guide:** the typical number of possessions left for each minute left in the 4th quarter. For example, about 5 with 10 minutes left, 3 with 5 minutes left, and 2 with 2 minutes left.
 
 ### Assumptions
 - One fourth-down decision per possession (only 2.5% of drives have 2 or more).
 - The opponent's calls, and our calls later in a drive, are league-typical.
 - Punts use the average net distance for that spot.
-- New possessions start at S.
+- After a TD or FG, the other team starts at S. After a drive with no score, the other team starts at H for the bucket the drive started in. After one of our fourth-down calls, the call sets their start spot (failed go, missed kick, or punt).
 - M is known.
 - A converted fourth down that is not a TD carries on like a new drive from the spot it reached. A 10+ conversion gains exactly 10 yards.
 - Defensive scores and safeties count as no score.
