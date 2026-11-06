@@ -57,8 +57,9 @@ From the project folder, run these in order:
 | 4 | `python3 code/04_team_outputs.py` | `outputs/Week1_Data_Summary.xlsx` (the team workbook) and `data/formula_checks.csv` |
 | 5 | `python3 code/05_inputs.py` | `data/inputs/` (every input the dynamic program uses, see "The model" below) |
 | 6 | `python3 code/06_solve.py` | `data/results/policy.csv` (best call for every situation) and `outputs/DP_Hand_Check.xlsx` |
+| 7 | `python3 code/07_results.py` | `outputs/results/` (charts, comparison with real coaches, sensitivity tables) |
 
-Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Scripts 4 and 5 read the files from scripts 2 and 3. Script 6 reads the files from script 5. Each script prints checks (row counts, rates) when it finishes.
+Scripts 2 and 3 read the file that script 1 makes, so run script 1 first. Scripts 4 and 5 read the files from scripts 2 and 3. Script 6 reads the files from script 5, and script 7 reads the files from scripts 5 and 6. The model itself lives in `code/dp_model.py`, which scripts 6 and 7 both use, so the sensitivity runs use exactly the same model as the main solve. Each script prints checks (row counts, rates) when it finishes.
 
 Script 4 also asks LibreOffice (installed in `/Applications`) to recalculate every formula in the workbook and compares each result with the same number computed in pandas. Without LibreOffice it still builds the workbook and skips that check.
 
